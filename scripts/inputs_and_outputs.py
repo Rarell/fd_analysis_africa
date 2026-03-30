@@ -1,0 +1,263 @@
+import numpy as np
+import pickle
+from glob import glob
+from typing import Tuple
+from netCDF4 import Dataset
+from datetime import datetime, timedelta
+
+from utils import wind_speed, vapor_pressure_deficit
+
+raw_data_paths = {
+    'tair': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/temperature',
+    'd2m': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/moisture_surface', 
+    'sp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/pressure', 
+    'ws': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/wind_speed', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/wind_speed'],
+    'e': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/evaporation', 
+    'pev': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/potential_evaporation', 
+    'tp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/precipitation', 
+    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/moisture_surface'], 
+    'swvl1': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm', 
+    'swvl2': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm', 
+    'swvlrz': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm']
+}
+
+raw_data_base_names = {
+    'tair': 'africa_2m_temperature_',
+    'd2m': 'africa_2m_dewpoint_', 
+    'sp': 'africa_surface_pressure_', 
+    'ws': ['africa_10m_u_component_of_wind_', 'africa_10m_v_component_of_wind_'], 
+    'e': 'africa_evaporation_', 
+    'pev': 'africa_potential_evaporation_', 
+    'tp': 'africa_total_precipitation_', 
+    'vpd': ['africa_2m_temperature_', 'africa_2m_dewpoint_'], 
+    'swvl1': 'africa_volumetric_soil_water_layer_1_', 
+    'swvl2': 'africa_volumetric_soil_water_layer_2_', 
+    'swvlrz': ['africa_volumetric_soil_water_layer_1_', 'africa_volumetric_soil_water_layer_2_']
+}
+
+def load_fd_one_year(
+        file, 
+        sname, 
+        times: str = 'all'
+        ) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Load 1 year of FD data
+
+    Inputs:
+    :param file: path + filename of the year of FD data being loaded
+    :param sname: Dictionary key of the FD variable being loaded 
+    :param times: String indicating whether to return full year of FD, or only for summer/winter months
+
+    Outputs:
+    :param fd: One year of FD data loaded (np.ndarray with shape time x lat x lon)
+    :param dates_dt: Array of datetime timestamps for each time in FD (np.ndarray with shape time)
+    '''
+
+    # Load the FD data
+    with Dataset(file, 'r') as nc:
+        fd = nc.variables[sname][:]
+        dates = nc.variables['date'][:]
+
+        # Convert dates to datetimes
+        dates_dt = np.array([datetime.fromisoformat(date) for date in dates])
+
+        # Collect months
+        months = np.array([date.month for date in dates_dt])
+
+        # If desired, focus on "summer" months (MAMJJA)
+        if times == 'summer':
+            ind = np.where( (months >= 3) & (months <= 8) )[0]
+            fd = fd[ind,:,:]
+            dates_dt = dates_dt[ind]
+
+        # If desired, focus on "winter" months (SONDJF)
+        elif times == 'winter':
+            ind = np.where( (months >= 9) | (months <= 2) )[0]
+            fd = fd[ind,:,:]
+            dates_dt = dates_dt[ind]
+    return fd, dates_dt
+
+def load_index_one_year(
+        file, 
+        sname, 
+        index_base, 
+        times: str = 'all',
+        I: int = 180,
+        J: int = 360,
+        ) -> np.ndarray:
+    '''
+    Load one year of index data (i.e., SESR index, FDII index, or SM)
+
+    Inputs:
+    :param file: Path + filename of the year of index data to load
+    :param sname: Dictionary key of the data load; if None no data is loaded
+    :param index_base: Base filename of the index data
+    :param times: String indicating whether to return full year of index data, or only for summer/winter months
+    :param I, J: Spatial dimensions to make placeholder data if sname == None
+
+    Outputs:
+    :param index_data: Loaded index data
+    '''
+    # Load the index data
+    if sname is not None:
+        # For root zone, two soil layers need to be loaded to calculate RZSM
+        if 'rz' in index_base:
+            with Dataset(file[0], 'r') as nc:
+                index_data_1 = nc.variables[sname[0]][:]
+                dates = nc.variables['date'][:]
+
+                # Convert dates to datetimes
+                dates_dt = np.array([datetime.fromisoformat(date) for date in dates])
+
+                # Collect months
+                months = np.array([date.month for date in dates_dt])
+            
+            with Dataset(file[1], 'r') as nc:
+                index_data_2 = nc.variables[sname[1]][:]
+
+            # Calculate root zone SM
+            index_data = (7/28) * index_data_1 + (21/28) * index_data_2
+
+        else:
+            with Dataset(file, 'r') as nc:
+                index_data = nc.variables[sname][:]
+                dates = nc.variables['date'][:]
+
+                # Convert dates to datetimes
+                dates_dt = np.array([datetime.fromisoformat(date) for date in dates])
+
+                # Collect months
+                months = np.array([date.month for date in dates_dt])
+
+        # If desired, focus on "summer" months (MAMJJA)
+        if times == 'summer':
+            ind = np.where( (months >= 3) & (months <= 8) )[0]
+            index_data = index_data[ind,:,:]
+
+        # If desired, focus on "winter" months (SONDJF)
+        elif times == 'winter':
+            ind = np.where( (months >= 9) | (months <= 2) )[0]
+            index_data = index_data[ind,:,:]
+    
+    else:
+        # Placeholder so index_total can still be called when using FDII without 
+        # significant code changes or further bloating the params argument
+        index_data = np.zeros((1, I, J)) * np.nan 
+
+    return index_data
+
+def load_raw_data(sname):
+    '''
+    Load a set of raw data for a given variable
+    '''
+    # Collect the path to the variable
+    path = raw_data_paths[sname]
+
+    # Collect the base names of the variable
+    base_fn = raw_data_base_names[sname]
+
+    # Collect the base names of the variable
+    if isinstance(base_fn, list):
+        files = glob('%s/%s*.nc'%(path[0], base_fn[0]), recursive = True)
+        files_2 = glob('%s/%s*.nc'%(path[1], base_fn[1]), recursive = True)
+        files_2 = np.sort(files_2)
+    else:
+        files = glob('%s/%s*.nc'%(path, base_fn), recursive = True)
+
+    data = []
+
+    for n, file in enumerate(np.sort(files)):
+        if sname == 'ws':
+            # Load u and v components
+            with Dataset(file, 'r') as nc:
+                u = nc.variables['u10'][:]
+            
+            with Dataset(files_2[n], 'r') as nc:
+                v = nc.variables['v10'][:]
+
+            # Calculate wind speed
+            ws = wind_speed(u, v)
+            data.append(ws)
+        elif sname == 'vpd':
+            # Load T and T_d
+            with Dataset(file, 'r') as nc:
+                keys = nc.variables.keys()
+                sname_t = 'tair' if 'tair' in keys else 't2m'
+                tair = nc.variables[sname_t][:]
+            
+            with Dataset(files_2[n], 'r') as nc:
+                tdew = nc.variables['d2m'][:]
+
+            # Calculate vapor pressure deficit
+            vpd = vapor_pressure_deficit(tair, tdew)
+            data.append(vpd)
+        elif sname == 'swvlrz':
+            # Load T and T_d
+            with Dataset(file, 'r') as nc:
+                sm1 = nc.variables['swvl1'][:]
+            
+            with Dataset(files_2[n], 'r') as nc:
+                sm2 = nc.variables['swvl2'][:]
+
+            # Calculate RZSM
+            rzsm = (7/28) * sm1 + (21/28) * sm2
+            data.append(rzsm)
+        elif sname == 'tair':
+            # Load the data; note with T, some snames may be t2m instead of tair
+            with Dataset(file, 'r') as nc:
+                keys = nc.variables.keys()
+                sname_new = 'tair' if 'tair' in keys else 't2m'
+                data.append(nc.variables[sname_new][:])
+        else:
+            # Load the data
+            with Dataset(file, 'r') as nc:
+                data.append(nc.variables[sname][:])
+
+    # Turn the data into an array
+    data = np.concatenate(data, axis = 0)
+
+    return data
+
+def save_pickle(file, data, snames) -> None:
+    '''
+    Save several datasets to a pickle file
+
+    Inputs:
+    :param file: Path + filename of the pickle file to create
+    :param data: List of datasets to save
+    :param snames: List of dictionary keys for each dataset in data
+    '''
+
+    # Convert the data to a dictionary to all be saved at once
+    data_dict = {}
+    for n in range(len(data)):
+        data_dict[snames[n]] = data[n]
+
+    # Save the dataset
+    with open(file, 'wb') as f:
+        pickle.dump(data_dict, f)
+
+def load_pickle(file) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    '''
+    Load a pickle file.
+
+    Note this is set to specifically load FD characteristics of frequency, duration, and seveirty, 
+    and assumes the data is saved in the pickle file as a dictionary
+
+    Inputs:
+    :param file: Path + filename of the pickle file
+
+    Outputs:
+    :param frequency: Fd frequency for every grid and year (np.ndarray with shape time x lat x lon)
+    :param duration: Fd duration for every grid and year (np.ndarray with shape time x lat x lon)
+    :param severity: Fd severity for every grid and year (np.ndarray with shape time x lat x lon)
+    '''
+    # Load the pickle file
+    with open(file, 'rb') as f:
+        data = pickle.load(f)
+        frequency = data['freq']
+        duration = data['dur']
+        severity = data['sev']
+
+    return frequency, duration, severity
+
