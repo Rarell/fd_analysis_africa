@@ -802,6 +802,7 @@ if __name__ == '__main__':
 
     # parser.add_argument('--year', type = int, default = 0, help = 'Year to perform percentile/index calculations (note the actual year used is year + 2000)')
     parser.add_argument('--level', type = int, default = 0, help = 'ERA5 soil moisture level (must be 0 - 4; 0 means root zone depth)')
+    parser.add_argument('--model', type = str, default = 'era5', help = 'Type of reanalysis model (era5 or gldas) to perform analysis for')
 
     args = parser.parse_args()
 
@@ -822,19 +823,27 @@ if __name__ == '__main__':
     years = np.array([date.year for date in dates])
 
     # Load the aridity mask
-    with Dataset('%s/aridity_mask.nc'%base_path, 'r') as nc:
+    with Dataset('%s/%s/aridity_mask.nc'%(base_path, args.model), 'r') as nc:
         mask = nc.variables['aim'][0,:,:]
 
     # Load all ET, PET
     if args.load_et_and_pet_data:
         print('Loading ET and PET')
+        if args.model == 'era5':
+            base_et_fn = 'africa_evaporation'
+            base_pet_fn = 'africa_potential_evaporation'
+            sname_et = 'e'; sname_pet = 'pev'
+        else:
+            base_et_fn = 'africa_gldas.evaporation.daily'
+            base_pet_fn = 'africa_gldas.potential_evaporation.daily'
+            sname_et = 'evap'; sname_pet = 'pevap'
 
         # Initialize lists
         et = []; pet = []
         for year in all_years:
             # Load ET data
-            with Dataset('%s/evaporation/africa_evaporation_%04d.nc'%(base_path, year), 'r') as nc:
-                tmp = nc.variables['e'][:]
+            with Dataset('%s/%s/evaporation/%s_%04d.nc'%(base_path, args.model, base_et_fn, year), 'r') as nc:
+                tmp = nc.variables[sname_et][:]
 
                 # Also load lat and lon information here
                 lat = nc.variables['lat'][:]
@@ -844,8 +853,8 @@ if __name__ == '__main__':
                 et.append(tmp)
 
             # Load PET data
-            with Dataset('%s/potential_evaporation/africa_potential_evaporation_%04d.nc'%(base_path, year), 'r') as nc:
-                tmp = nc.variables['pev'][:]
+            with Dataset('%s/%s/potential_evaporation/%s_%04d.nc'%(base_path, args.model, base_pet_fn, year), 'r') as nc:
+                tmp = nc.variables[sname_pet][:]
 
                 # Add PET data to the list
                 pet.append(tmp)                
@@ -854,15 +863,32 @@ if __name__ == '__main__':
         et = np.concatenate(et)
         pet = np.concatenate(pet)
 
+        # For GLDAS, some unit conversion is needed for consistency with ET
+        if args.model == 'gldas': 
+            pet = pet / (2.5e6) # Division by latent heat of vaporization yields conversion of W m^-2 = J s^-1 m^-2 -> kg s^-1 m^-2
+
     
     if args.load_sm_data:
+        if args.model == 'era5':
+            base_sm1_fn = 'africa_volumetric_soil_water_layer_1'
+            base_sm2_fn = 'africa_volumetric_soil_water_layer_2'
+            base_sm3_fn = 'africa_volumetric_soil_water_layer_3'
+            base_sm4_fn = 'africa_volumetric_soil_water_layer_4'
+            sname1 = 'swvl1'; sname2 = 'swvl2'; sname3 = 'swvl3'; sname4 = 'swvl4'
+        else:
+            base_sm1_fn = 'africa_gldas.soil_moisture_0-10cm.daily'
+            base_sm2_fn = 'africa_gldas.soil_moisture_10-40cm.daily'
+            base_sm3_fn = 'africa_gldas.soil_moisture_40-100cm.daily'
+            base_sm4_fn = 'africa_gldas.soil_moisture_100-200cm.daily'
+            sname1 = sname2 = sname3 = sname4 = 'soilm'
+
         # Initialize lists
         sm = {}
         sm[1] = []; sm[2] = []; sm[3] = []; sm[4] = []
         for year in all_years:              
             # Load SM data
-            with Dataset('%s/liquid_vsm/africa_volumetric_soil_water_layer_1_%04d.nc'%(base_path, year), 'r') as nc:
-                tmp = nc.variables['swvl1'][:]
+            with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm1_fn, year), 'r') as nc:
+                tmp = nc.variables[sname1][:]
 
                 # Also load lat and lon information here
                 lat = nc.variables['lat'][:]
@@ -870,18 +896,18 @@ if __name__ == '__main__':
 
                 sm[1].append(tmp)
 
-            with Dataset('%s/liquid_vsm/africa_volumetric_soil_water_layer_2_%04d.nc'%(base_path, year), 'r') as nc:
-                tmp = nc.variables['swvl2'][:]
+            with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm2_fn, year), 'r') as nc:
+                tmp = nc.variables[sname2][:]
 
                 sm[2].append(tmp)
 
-            with Dataset('%s/liquid_vsm/africa_volumetric_soil_water_layer_3_%04d.nc'%(base_path, year), 'r') as nc:
-                tmp = nc.variables['swvl3'][:]
+            with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm3_fn, year), 'r') as nc:
+                tmp = nc.variables[sname3][:]
 
                 sm[3].append(tmp)
 
-            with Dataset('%s/liquid_vsm/africa_volumetric_soil_water_layer_4_%04d.nc'%(base_path, year), 'r') as nc:
-                tmp = nc.variables['swvl4'][:]
+            with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm4_fn, year), 'r') as nc:
+                tmp = nc.variables[sname4][:]
 
                 sm[4].append(tmp)
 
@@ -899,7 +925,7 @@ if __name__ == '__main__':
         # smp[1] = []; smp[2] = []; smp[3] = []; smp[4] = []; smp['rz'] = []
         for year in all_years:              
             # Load SM data
-            with Dataset('%s/soil_moisture_percentiles/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, str(key), year), 'r') as nc:
+            with Dataset('%s/%s/soil_moisture_percentiles/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, args.model, str(key), year), 'r') as nc:
                 tmp = nc.variables['smp%s'%str(key)][:]
 
                 # Also load lat and lon information here
@@ -972,9 +998,9 @@ if __name__ == '__main__':
             time = np.array([date.isoformat() for date in dates_year])
 
             # Save the results
-            with Dataset('%s/africa_sesr_%04d.nc'%(base_path, year), 'w', format = 'NETCDF4') as nc:
+            with Dataset('%s/%s/africa_sesr_%04d.nc'%(base_path, args.model, year), 'w', format = 'NETCDF4') as nc:
             # with Dataset('../era5/sesr_%04d.nc'%(year), 'w', format = 'NETCDF4') as nc:
-                nc.description = 'Daily ERA5 reanalysis data for SESR over Africa, calculated from evaporation and potential evaporaiton'
+                nc.description = 'Daily %s reanalysis data for SESR over Africa, calculated from evaporation and potential evaporaiton'%args.model.upper()
 
                 # Create Dimensions
                 T, I, J = sesr.shape
@@ -1006,7 +1032,7 @@ if __name__ == '__main__':
             variable = []
             for year in all_years:
                 # Load SESR data
-                with Dataset('%s/fd_indices/africa_sesr_%04d.nc'%(base_path, year), 'r') as nc:
+                with Dataset('%s/%s/fd_indices/africa_sesr_%04d.nc'%(base_path, args.model, year), 'r') as nc:
                     tmp = nc.variables['sesr'][:]
 
                     # Also load lat and lon information here
@@ -1022,7 +1048,10 @@ if __name__ == '__main__':
             # SM is loaded separately
             key = 'rz' if args.level == 0 else args.level
 
-            variable = (7/28) * sm[1] + (21/28) * sm[2] if args.level == 0 else sm[key]
+            if args.model == 'era5':
+                variable = (7/28) * sm[1] + (21/28) * sm[2] if args.level == 0 else sm[key]
+            else:
+                variable = (10/40) * sm[1] + (30/40) * sm[2] if args.level == 0 else sm[key]
 
         # Calculate the thresholds
         print('Calculating percentiles')
@@ -1040,9 +1069,9 @@ if __name__ == '__main__':
 
         # Save the results
         var_name = 'sesr' if args.level > 4 else 'swvl%s'%key
-        with Dataset('%s/africa_%s_40_percent_thresh.nc'%(base_path, var_name), 'w', format = 'NETCDF4') as nc:
+        with Dataset('%s/%s/africa_%s_40_percent_thresh.nc'%(base_path, args.model, var_name), 'w', format = 'NETCDF4') as nc:
         # with Dataset('../era5/sesr_%04d.nc'%(year), 'w', format = 'NETCDF4') as nc:
-            nc.description = 'Daily ERA5 reanalysis data for the 40th percentile value of %s over Africa'%var_name
+            nc.description = 'Daily %s reanalysis data for the 40th percentile value of %s over Africa'%(args.model.upper(), var_name)
 
             # Create Dimensions
             T, I, J = thresholds.shape
@@ -1073,7 +1102,7 @@ if __name__ == '__main__':
         sesr = []
         for year in all_years:
             # Load ET data
-            with Dataset('%s/fd_indices/africa_sesr_%04d.nc'%(base_path, year), 'r') as nc:
+            with Dataset('%s/%s/fd_indices/africa_sesr_%04d.nc'%(base_path, args.model, year), 'r') as nc:
                 tmp = nc.variables['sesr'][:]
 
                 # Also load lat and lon information here
@@ -1107,8 +1136,8 @@ if __name__ == '__main__':
             time = np.array([date.isoformat() for date in dates_year])
 
             # Save the results
-            with Dataset('%s/africa_fd_sesr_%04d.nc'%(base_path, year), 'w', format = 'NETCDF4') as nc:
-                nc.description = 'Daily ERA5 reanalysis data for identified FD according to the Christian et al. 2023 method over Africa'
+            with Dataset('%s/%s/africa_fd_sesr_%04d.nc'%(base_path, args.model, year), 'w', format = 'NETCDF4') as nc:
+                nc.description = 'Daily %s reanalysis data for identified FD according to the Christian et al. 2023 method over Africa'%args.model.upper()
 
                 # Create Dimensions
                 T, I, J = fd_year.shape
@@ -1133,7 +1162,10 @@ if __name__ == '__main__':
     # Calculate SM percentiles and save the results
     if args.calculate_sm_percentiles:
         # Create one layer for 0 - 28 cm (root zone SM)
-        sm['rz'] = (7/28) * sm[1] + (21/28) * sm[2] # Weighted average based on depth of each soil layer
+        if args.model == 'era5':
+            sm['rz'] = (7/28) * sm[1] + (21/28) * sm[2] # Weighted average based on depth of each soil layer
+        else:
+            sm['rz'] = (10/40) * sm[1] + (30/40) * sm[2] # Weighted average based on depth of each soil layer
 
         keys = [1, 2, 3, 4, 'rz']
         sm_year = {}
@@ -1153,7 +1185,7 @@ if __name__ == '__main__':
             # Calculate the percentiles for each layer
             for key in keys:
                 # Skip the calculations if the file already exists
-                if os.path.exists('%s/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, str(key), year)):
+                if os.path.exists('%s/%s/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, args.model, str(key), year)):
                     continue
 
                 # Calculate the SM percentiles
@@ -1164,20 +1196,20 @@ if __name__ == '__main__':
                                                mask = mask)
                 
                 # Save the results
-                with Dataset('%s/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, str(key), year), 'w', format = 'NETCDF4') as nc:
+                with Dataset('%s/%s/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, args.model, str(key), year), 'w', format = 'NETCDF4') as nc:
                     # Determine the depth of the soil layer
                     if key == 1:
-                        depth = '0 - 7'
+                        depth = '0 - 7' if args.model == 'era5' else '0 - 10'
                     elif key == 2:
-                        depth = '7 - 28'
+                        depth = '7 - 28' if args.model == 'era5' else '10 - 40'
                     elif key == 3:
-                        depth = '28 - 100'
+                        depth = '28 - 100' if args.model == 'era5' else '40 - 100'
                     elif key == 4:
-                        depth = '100 - 289'
+                        depth = '100 - 289' if args.model == 'era5' else '100 - 200'
                     else: # All that remains here is the root zone layer
-                        depth = '0 - 28'
+                        depth = '0 - 28' if args.model == 'ear5' else '0 - 40'
 
-                    nc.description = 'Daily ERA5 reanalysis data for %s cm soil moisture percentiles over Africa'%depth
+                    nc.description = 'Daily %s reanalysis data for %s cm soil moisture percentiles over Africa'%(args.model.upper(), depth)
 
                     # Create Dimensions
                     T, I, J = smp.shape
@@ -1224,20 +1256,20 @@ if __name__ == '__main__':
             time = np.array([date.isoformat() for date in dates_year])
 
             # Save the results
-            with Dataset('%s/africa_fdii_%s_%04d.nc'%(base_path, str(key), year), 'w', format = 'NETCDF4') as nc:
+            with Dataset('%s/%s/africa_fdii_%s_%04d.nc'%(base_path, args.model, str(key), year), 'w', format = 'NETCDF4') as nc:
                 # Determine the depth of the soil layer
                 if key == 1:
-                    depth = '0 - 7'
+                    depth = '0 - 7' if args.model == 'era5' else '0 - 10'
                 elif key == 2:
-                    depth = '7 - 28'
+                    depth = '7 - 28' if args.model == 'era5' else '10 - 40'
                 elif key == 3:
-                    depth = '28 - 100'
+                    depth = '28 - 100' if args.model == 'era5' else '40 - 100'
                 elif key == 4:
-                    depth = '100 - 289'
+                    depth = '100 - 289' if args.model == 'era5' else '100 - 200'
                 else: # All that remains here is the root zone layer
-                    depth = '0 - 28'
+                    depth = '0 - 28' if args.model == 'era5' else '0 - 40'
 
-                nc.description = 'Daily ERA5 reanalysis data for %s cm Flash Drought Intensity Index over Africa'%depth
+                nc.description = 'Daily %s reanalysis data for %s cm Flash Drought Intensity Index over Africa'%(args.model.upper(), depth)
 
                 # Create Dimensions
                 T, I, J = fdii_year.shape
@@ -1290,20 +1322,20 @@ if __name__ == '__main__':
             time = np.array([date.isoformat() for date in dates_year])
 
             # Save the results
-            with Dataset('%s/africa_fd_sm_%s_%04d.nc'%(base_path, str(key), year), 'w', format = 'NETCDF4') as nc:
+            with Dataset('%s/%s/africa_fd_sm_%s_%04d.nc'%(base_path, args.model, str(key), year), 'w', format = 'NETCDF4') as nc:
                 # Determine the depth of the soil layer
                 if key == 1:
-                    depth = '0 - 7'
+                    depth = '0 - 7' if args.model == 'era5' else '0 - 10'
                 elif key == 2:
-                    depth = '7 - 28'
+                    depth = '7 - 28' if args.model == 'era5' else '10 - 40'
                 elif key == 3:
-                    depth = '28 - 100'
+                    depth = '28 - 100' if args.model == 'era5' else '40 - 100'
                 elif key == 4:
-                    depth = '100 - 289'
+                    depth = '100 - 289' if args.model == 'era5' else '100 - 200'
                 else: # All that remains here is the root zone layer
-                    depth = '0 - 28'
+                    depth = '0 - 28' if args.model == 'era5' else '0 - 40'
 
-                nc.description = 'Daily ERA5 reanalysis data for identified FD according to the Yuan et al. 2023 method over Africa for the %s cm soil layer'%depth
+                nc.description = 'Daily %s reanalysis data for identified FD according to the Yuan et al. 2023 method over Africa for the %s cm soil layer'%(args.model.upper(), depth)
 
                 # Create Dimensions
                 T, I, J = fd_year.shape
