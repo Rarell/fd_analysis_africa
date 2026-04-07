@@ -12,8 +12,8 @@ from glob import glob
 
 from statistics_calculations import least_squares, correlate, monte_carlo_significance
 from inputs_and_outputs import load_fd_one_year, load_index_one_year, load_raw_data, load_pickle, save_pickle
-from make_figures import make_statistics_maps, make_boxplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot
-from utils import standardize_variable
+from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots
+from utils import standardize_variable, calculate_spi
 
 warnings.filterwarnings('ignore')
 
@@ -453,6 +453,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--skip_variable_boxplots', action = 'store_false', help = 'Skip making the variable anomaly boxplots in the sensitivity analysis')
     parser.add_argument('--skip_correlation_plots', action = 'store_false', help = 'Skip the correlation analysis in the sensitivity analysis')
+    parser.add_argument('--skip_energy_moisture_drivers', action = 'store_false', help = 'Skip the moisture/energy limited analysis')
 
     parser.add_argument('--level', type = int, default = 0, help = 'ERA5 soil moisture level (must be 0 - 4; 0 means root zone depth)')
     parser.add_argument('--start_year', type = int, default = 1979, help = 'First year in FD dataset')
@@ -499,8 +500,6 @@ if __name__ == '__main__':
     lon_ind = np.where(lon[0,:] > 330)[0]
     lon_tmp = lon[:,lon_ind]
     lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
-
-    # Make map highlighting specific regions
 
     # Make figures for FD statistics if desired
     if args.fd_stats_analysis:
@@ -775,15 +774,23 @@ if __name__ == '__main__':
         Ndays = (end - start).days
         dates_all = np.array([start + timedelta(days = day) for day in range(Ndays)])
 
+        I, J = mask.shape
+        mask_1d = mask.reshape(I*J)
+
         # Initialize the correlation dataset
         r = {}; sig = {}
         r_index = {}; sig_index = {}
         r_lag = {}; sig_lag = {}
         r_index_lag = {}; sig_index_lag = {}
 
-        # Make the hypthesos testing for correlation
+        # Make the hypthesis testing for correlation
         rng = np.random.default_rng()
         test_method = stats.MonteCarloMethod(n_resamples = 5000, rvs = (rng.normal, rng.normal))
+
+        # Make dictionaries for the energy/moisture limited analysis
+        spi_anomalies = {}
+        pet_anomalies = {}
+        fd_starts = {}
 
         # Perform analysis for each FD method
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
@@ -820,6 +827,10 @@ if __name__ == '__main__':
                     
                     # Note from this, all anomalies are in a flattened shape
                     for ij in tqdm(range(I*J), desc = 'Indexing %s anomalies'%var_sname):
+                        # Skip sea and arid grids
+                        if mask_1d[ij] == 0:
+                            continue
+
                         # Collect the variable anomalies during start of FD
                         ind = start_dates_ind[ij]
                         ind = np.array(ind)
@@ -1006,6 +1017,81 @@ if __name__ == '__main__':
                     r_index_lag['%s_%s'%(fd_type, var_sname)] = np.array(r_index_lag['%s_%s'%(fd_type, var_sname)])
                     sig_lag['%s_%s'%(fd_type, var_sname)] = np.array(sig_lag['%s_%s'%(fd_type, var_sname)])
                     sig_index_lag['%s_%s'%(fd_type, var_sname)] = np.array(sig_index_lag['%s_%s'%(fd_type, var_sname)])
+
+            if args.skip_energy_moisture_drivers:
+                # Collect datetimes of FD start; note the shape is lat x lon
+                start_dates, start_dates_ind = load_start_times(args, fn_base, sname)
+                fd_starts[fd_type] = start_dates_ind
+
+        if args.skip_energy_moisture_drivers:
+            # Load precipitation
+            precip = load_raw_data('tp')
+            T, I, J = precip.shape
+
+            lat_ind = np.where((lat[:,0] >= 5) & (lat[:,0] <= 10))[0]
+            lon_ind = np.where((lon[0,:] >= 5) & (lon[0,:] <= 40))[0]
+            print(lon_ind, lat_ind)
+
+            # tmp = precip[:,lat_ind,:]
+            # precip = tmp[:,:,lon_ind]
+
+            # Calculate the SPI
+            spi = calculate_spi(precip, dates_all)
+
+            # Load the PET
+            pet = load_raw_data('pev')
+            pet = -1*pet# Convert so positive PET represents energy fluxed into the atmosphere
+
+            # tmp = pet[:,lat_ind,:]
+            # pet = tmp[:,:,lon_ind]
+
+            # Determine the standardized anomaly of PET
+            pet = standardize_variable(pet, 
+                                       dates_all, 
+                                       datetime(1990, 1, 1),
+                                       datetime(2020, 12, 31))
+            
+            # Reshape to have the same spatial dimension as the start dates
+            # T, I, J = spi.shape
+            spi = spi.reshape(T, I*J)
+            pet = pet.reshape(T, I*J)
+            print(np.nanmin(pet), np.nanmax(pet), np.nanmean(pet))
+
+            # Determine the average PET and SPI for each recorded FD
+            for fd_type in fd_types:
+                spi_fd = []
+                pet_fd = []
+                for ij in range(I*J):
+                    # # Skip sea and arid grid points
+                    if mask_1d[ij] == 0:
+                        continue
+
+                    # Average over start of FD - 30 days to start of FD (covers onset period plus a little time before)
+                    ind_end = fd_starts[fd_type][ij]
+                    for t in ind_end:
+                        # If FD occurs at the near of the time series, start at the beginning of the time series
+                        if (t - 30) < 0:
+                            start = 0
+                        else:
+                            start = t - 30
+
+                        # Perform the average
+                        spi_avg = np.nanmean(spi[start:t+1,ij])
+                        pet_avg = np.nanmean(pet[start:t+1,ij])
+                        
+                        # Add data to the lists
+                        spi_fd.append(spi_avg)
+                        pet_fd.append(pet_avg)
+
+                # Convert lists to array to allow finding conditions
+                spi_fd = np.array(spi_fd)
+                pet_fd = np.array(pet_fd)
+                print(np.nanmin(pet_fd), np.nanmax(pet_fd), np.nanmean(pet_fd))
+                print(pet_fd)
+
+                spi_anomalies[fd_type] = spi_fd
+                pet_anomalies[fd_type] = pet_fd
+
         
         if args.skip_correlation_plots:
             for n, var_sname in enumerate(variable_snames):
@@ -1031,17 +1117,135 @@ if __name__ == '__main__':
             savename = 'lagged_correlation_fd_index_%s.png'%(level)
             make_lagged_correlation_plot(r_index_lag, sig_index_lag, lags, variable_snames, fd_types, labels, path = args.figure_path, savename = savename)
 
-        # Correlation between FD and index with drivers (anomaly correlation with index)
-        # Lagged response correlation
-        # Fig. 2 in Mukherjee et al. 2022
+        if args.skip_energy_moisture_drivers:
+
+            # Make barplots with associated conditions
+            bar_data = []
+            bar_std = []
+            for fd_type in fd_types:
+                moisture_limited = np.where((spi_anomalies[fd_type] < -1) & (pet_anomalies[fd_type] < 1), 1, 0)
+                energy_limited = np.where((spi_anomalies[fd_type] > -1) & (pet_anomalies[fd_type] > 1), 1, 0)
+                both_limited = np.where((spi_anomalies[fd_type] < -1) & (pet_anomalies[fd_type] > 1), 1, 0)
+                moisture_condition = np.where(spi_anomalies[fd_type] < -1, 1, 0)
+                energy_condition = np.where(pet_anomalies[fd_type] > 1, 1, 0)
+
+                # Relative percentage of FD events
+                moisture_limited_regime = np.nansum(moisture_limited) * 100/spi_anomalies[fd_type].size
+                energy_limited_regime = np.nansum(energy_limited) * 100/spi_anomalies[fd_type].size
+                both_limited_regime = np.nansum(both_limited) * 100/spi_anomalies[fd_type].size
+                moisture_condition_regime = np.nansum(moisture_condition) * 100/spi_anomalies[fd_type].size
+                energy_condition_regime = np.nansum(energy_condition) * 100/spi_anomalies[fd_type].size
+
+                bar_data.append([moisture_condition_regime, energy_condition_regime, moisture_limited_regime, energy_limited_regime, both_limited_regime])
+
+                # Standard deviations of relative FD events
+                moisture_limited_regime = np.nanstd(moisture_limited * 100/spi_anomalies[fd_type].size)
+                energy_limited_regime = np.nanstd(energy_limited * 100/spi_anomalies[fd_type].size)
+                both_limited_regime = np.nanstd(both_limited * 100/spi_anomalies[fd_type].size)
+                moisture_condition_regime = np.nanstd(moisture_condition * 100/spi_anomalies[fd_type].size)
+                energy_condition_regime = np.nanstd(energy_condition * 100/spi_anomalies[fd_type].size)
+
+                bar_std.append([moisture_condition_regime, energy_condition_regime, moisture_limited_regime, energy_limited_regime, both_limited_regime])
+
+            # Tick labels
+            x_ticks = ['SPI<-1', 'PET>1', 'SPI<-1 &\nPET<1', 'SPI>-1 &\nPET>1', 'SPI<-1 &\nPET>1']
+
+            savename = 'moisture_energy_driver_for_layer_%s_fd.png'%level
+            make_barplots(bar_data, 
+                          fd_types, 
+                          'Relative Number (%) of FDs\nwith Given Conditions',
+                          x_ticks,
+                          bar_err = bar_std,
+                          path = args.figure_path,
+                          savename = savename)
+
         # EOFs?
         # Ways to determine energy vs. moisture driven FD (such as % FDs with precip anomaly < -1, and/or PET anomaly > 1; Fig. 4 in Christian et al. 2021)
 
 
     if args.fd_scatterplots:
-        # Scatter plots of different total FD events recoreded by different methods (Fig. 4 in Nogeura 2021)
-        pass
+        frequency = []
+        frequency_sum = []
+        frequency_win = []
+        for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
+            # Perform FD statistics calculations for the all years
+            freq, _, _ = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask)
+            frequency.append(freq.flatten())
 
+            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask , times = 'summer')
+            frequency_sum.append(freq.flatten())
+
+            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask , times = 'winter')
+            frequency_win.append(freq.flatten())
+
+        # Remove NaNs
+        for i in range(len(frequency)):
+            frequency[i] = np.delete(frequency[i], np.isnan(frequency[i]))
+            frequency_sum[i] = np.delete(frequency_sum[i], np.isnan(frequency_sum[i]))
+            frequency_win[i] = np.delete(frequency_win[i], np.isnan(frequency_win[i]))
+
+        # In the event that removed NaNs cause length inconsistency
+        ind = np.nanmin([len(frequency[0]), len(frequency[1]), len(frequency[2])]) # data[alt_ind is shorter]
+        frequency[0] = frequency[0][:ind]; frequency[1] = frequency[1][:ind]; frequency[2] = frequency[2][:ind]
+
+        ind = np.nanmin([len(frequency_sum[0]), len(frequency_sum[1]), len(frequency_sum[2])]) # data[alt_ind is shorter]
+        frequency_sum[0] = frequency_sum[0][:ind]; frequency_sum[1] = frequency_sum[1][:ind]; frequency_sum[2] = frequency_sum[2][:ind]
+
+        ind = np.nanmin([len(frequency_win[0]), len(frequency_win[1]), len(frequency_win[2])]) # data[alt_ind is shorter]
+        frequency_win[0] = frequency_win[0][:ind]; frequency_win[1] = frequency_win[1][:ind]; frequency_win[2] = frequency_win[2][:ind]
+
+
+        # Calculate correlation, pval, and regression parameters
+        correlations = np.ones((len(frequency), 3))
+        pvals = np.ones((len(frequency), 3))
+        slopes = np.ones((len(frequency), 3))
+        intercepts = np.ones((len(frequency), 3))
+
+        # Make the hypthesis testing for correlation
+        rng = np.random.default_rng()
+        test_method = stats.MonteCarloMethod(n_resamples = 5000, rvs = (rng.normal, rng.normal))
+
+        for i in range(len(frequency)):
+            # Determine the other frequency to correlate the current one with
+            alt_ind = i + 1
+            if alt_ind >= len(frequency):
+                alt_ind = 0
+
+            # Perform correlation
+            results = stats.pearsonr(frequency[i], frequency[alt_ind], method = test_method)
+            correlations[i,0] = results.statistic
+            pvals[i,0] = results.pvalue
+
+            results = stats.pearsonr(frequency_sum[i], frequency_sum[alt_ind], method = test_method)
+            correlations[i,1] = results.statistic
+            pvals[i,1] = results.pvalue
+
+            results = stats.pearsonr(frequency_win[i], frequency_win[alt_ind], method = test_method)
+            correlations[i,2] = results.statistic
+            pvals[i,2] = results.pvalue
+
+            # Determine regression values
+            slopes[i,0], intercepts[i,0], _ = least_squares(frequency[i], frequency[alt_ind])
+            slopes[i,1], intercepts[i,1], _ = least_squares(frequency_sum[i], frequency_sum[alt_ind])
+            slopes[i,2], intercepts[i,2], _ = least_squares(frequency_win[i], frequency_win[alt_ind])
+
+
+        # Make the scatter plot 
+        savename = 'fd_scatterplots_level_%s.png'%level
+        make_scatterplots(frequency, 
+                          frequency_sum, 
+                          frequency_win, 
+                          correlations, 
+                          pvals, 
+                          fd_types, 
+                          ['Annual', 'MAMJJA', 'SONDJF'],
+                          slope = slopes, 
+                          intercept = intercepts,  
+                          path = args.figure_path, 
+                          savename = savename)
+        # Scatter plots of different total FD events recoreded by different methods (Fig. 4 in Nogeura 2021)
+
+    # Make map highlighting specific regions
     if args.make_region_map:
         savename = 'africa_regional_map.png'
         create_regional_boxes(savename = savename, path = args.figure_path)

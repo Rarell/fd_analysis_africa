@@ -572,6 +572,50 @@ def make_variable_boxplots(data, var_labels, labels, fd_type, path = './', saven
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
     plt.show(block = False)
 
+def make_barplots(data, labels, ylabel, xtick_labels, bar_err = None, path = './', savename = 'tmp.png'):
+    '''
+    Make a boxplot of multiple inputs
+    '''
+
+    # Initialize the figure
+    fig, ax = plt.subplots(figsize = [14, 8], nrows = 1, ncols = 1)
+
+    colors = ['grey', 
+              '#DC143C', # Crimson
+              '#0000FF'  # Blue
+              ]
+
+    # Make the bar plots
+    for n, dataset in enumerate(data):
+        ind = np.arange(len(dataset))
+        width = 0.25
+
+        if bar_err is not None:
+            err = bar_err[n]
+        else:
+            err = None
+        print(err)
+
+        ax.bar(ind + n*width, dataset, width, facecolor = colors[n], alpha = 1.0, yerr = err, label = labels[n].upper())
+
+    # Set the legend
+    ax.legend(fontsize = 22)
+
+    # Set the ticks
+    ax.set_xticks(ind + width, labels = xtick_labels)
+
+    # Set t label
+    ax.set_ylabel(ylabel, fontsize = 22)
+
+    # Set the tick size
+    for i in ax.xaxis.get_ticklabels() + ax.yaxis.get_ticklabels():
+        i.set_size(22)
+
+    # Save the figure
+    plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
+    plt.show(block = False)
+
+
 def timeseries_plot(x, y, slopes, intercepts, p_values, fd_types, label, times, path = './', savename = 'tmp.png'):
     '''
     Make multiple time series plots (columns of three), with multiple lines and regression lines for eachs
@@ -610,6 +654,88 @@ def timeseries_plot(x, y, slopes, intercepts, p_values, fd_types, label, times, 
         # Set the tick size
         for i in axes[n].xaxis.get_ticklabels() + axes[n].yaxis.get_ticklabels():
             i.set_size(22)
+
+    # Save the figure
+    plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
+    plt.show(block = False)
+
+def make_scatterplots(x, y, z, r, pval, labels, suptitles, slope = None, intercept = None, path = './', savename = 'tmp.png'):
+    '''
+    Make a set of scatterplots between with potentially linear regression lines between variables
+    '''
+    max_limit = np.nanmax([np.nanmax(x), np.nanmax(y), np.nanmax(z)])
+
+    # Create a colorbar
+    cmin = 0.0001; cmax = 300
+    cint = (cmax - cmin)/200
+    clevs = np.arange(cmin, cmax + cint, cint)
+    nlevs = len(clevs)
+    cmap  = plt.get_cmap(name = 'rainbow', lut = nlevs)
+
+    ncols = 3
+
+    # Initialize the figure
+    fig, axes = plt.subplots(figsize = [24, 24], nrows = len(x), ncols = ncols)
+    plt.subplots_adjust(hspace = 0.25, wspace = 0.25)
+
+    for i in range(len(x)):
+        
+        # Collect the index to correlate the current row of data with
+        alt_ind = i+1
+        if alt_ind >= len(x):
+            alt_ind = 0
+
+        for j in range(ncols):
+            ax = axes[i,j]
+            if j == 0:
+                data = x
+            elif j == 1:
+                data = y
+            else:
+                data = z
+
+            h2d = ax.hist2d(data[i], data[alt_ind], bins = 60, cmin = cmin, vmax = cmax, edgecolor = 'face', cmap = cmap, rasterized = True)
+
+            # Set the ideal line
+            ideal_line = np.arange(0, max_limit)
+            ax.plot(ideal_line, ideal_line, color = 'grey', linestyle = '--', linewidth = 1.0)
+
+            # Set the regression line if given
+            if (slope is not None) & (intercept is not None):
+                regress_line = slope[i,j] * ideal_line + intercept[i,j]
+                ax.plot(ideal_line, regress_line, color = 'k', linewidth = 2.0)
+
+            # Set limits
+            ax.set_xlim([0, max_limit])
+            ax.set_ylim([0, max_limit])
+
+            # Set labels
+            ax.set_xlabel(labels[i].upper(), fontsize = 22)
+            ax.set_ylabel(labels[alt_ind].upper(), fontsize = 22)
+
+            # Use the title to set the correlation and pval
+            if i == 0:
+                ax.set_title("%s\nPearson's r = %4.2f, p-value = %4.3f"%(suptitles[j], r[i,j], pval[i,j]), fontsize = 22)
+            else:
+                ax.set_title("Pearson's r = %4.2f, p-value = %4.3f"%(r[i,j], pval[i,j]), fontsize = 22)
+
+            # Set the tick sizes
+            for tick in ax.xaxis.get_ticklabels() + ax.yaxis.get_ticklabels():
+                tick.set_size(18)
+
+    # Add a colorbar
+    # cbax = fig.add_axes([0.91, 0.11, 0.018, 0.77]) # for vertical orientation
+    cbax = fig.add_axes([0.12, 0.05, 0.78, 0.018]) # for horizontal orientation
+    # Add the colorbar
+    cbar = mcolorbar.Colorbar(cbax, mappable = h2d[3], extend = 'max', orientation = 'horizontal')
+
+    # Add a colorbar label
+    cbar.ax.set_xlabel('Counts', fontsize = 22)
+
+    # Set the colorbar tick size
+    for i in cbar.ax.xaxis.get_ticklabels():
+        i.set_size(22)
+
 
     # Save the figure
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
@@ -722,6 +848,10 @@ if __name__ == '__main__':
     # Test and refine some of the figures
     from netCDF4 import Dataset
 
+    test_correlation = False
+    test_barplot = False
+    test_scatterplot = False
+
     # Determine FD types
     fd_types = ['sesr', 'rzsm', 'fdii']
 
@@ -743,32 +873,152 @@ if __name__ == '__main__':
     lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
     
     # Initialize some datasets
-    r = {}; sig = {}
-    r_lag = {}; sig_lag = {}
+    if test_correlation:
+        r = {}; sig = {}
+        r_lag = {}; sig_lag = {}
 
-    lags = np.arange(-30, 30+1, 1)
+        lags = np.arange(-30, 30+1, 1)
 
-    # Generate random data to plot for each FD type
-    for fd_type in fd_types:
+        # Generate random data to plot for each FD type
+        for fd_type in fd_types:
 
+            for var in var_list:
+                # Generate random data to fill in
+                r['%s_%s'%(fd_type, var)] = np.random.random_sample((lat.shape))
+                sig['%s_%s'%(fd_type, var)] = np.random.random_sample((lat.shape))
+
+                r_lag['%s_%s'%(fd_type, var)] = np.random.random_sample((lags.size,))
+                sig_lag['%s_%s'%(fd_type, var)] = np.random.random_sample((lags.size,))
+            
         for var in var_list:
-            # Generate random data to fill in
-            r['%s_%s'%(fd_type, var)] = np.random.random_sample((lat.shape))
-            sig['%s_%s'%(fd_type, var)] = np.random.random_sample((lat.shape))
+            map_data = [r['%s_%s'%(fd_type, var)] for fd_type in fd_types]
+            sig_data = [sig['%s_%s'%(fd_type, var)] for fd_type in fd_types]
+            
+            # Make the test maps
+            savename = '%s_test_correlation_map.png'%(var)
+            make_correlation_maps(map_data, sig_data, lat, lon, fd_types, var, path = './', savename = savename)
 
-            r_lag['%s_%s'%(fd_type, var)] = np.random.random_sample((lags.size,))
-            sig_lag['%s_%s'%(fd_type, var)] = np.random.random_sample((lags.size,))
-        
-    for var in var_list:
-        map_data = [r['%s_%s'%(fd_type, var)] for fd_type in fd_types]
-        sig_data = [sig['%s_%s'%(fd_type, var)] for fd_type in fd_types]
-        
-        # Make the test maps
-        savename = '%s_test_correlation_map.png'%(var)
-        make_correlation_maps(map_data, sig_data, lat, lon, fd_types, var, path = './', savename = savename)
+        # Make the test time series plots
+        savename = 'test_lagged_correlation.png'
+        make_lagged_correlation_plot(r_lag, sig_lag, lags, var_list, fd_types, var_list, path = './', savename = savename)
 
-    # Make the test time series plots
-    savename = 'test_lagged_correlation.png'
-    make_lagged_correlation_plot(r_lag, sig_lag, lags, var_list, fd_types, var_list, path = './', savename = savename)
+    if test_barplot:
+        # Test the barplot to ensure it comes out well.
+
+        # For each fd type, generate some random data to plot
+        spi_anomalies = {}
+        pet_anomalies = {}
+        for fd_type in fd_types:
+
+            # Generate random data
+            spi_anomalies[fd_type] = np.random.uniform(-3, 3, size = (80000,))
+            pet_anomalies[fd_type] = np.random.uniform(-3, 3, size = (80000,))
+
+        # Sort data into proper formatting
+        bar_data = []
+        bar_std = []
+        for fd_type in fd_types:
+            moisture_limited = np.where((spi_anomalies[fd_type] < -1) & (pet_anomalies[fd_type] < 1), 1, 0)
+            energy_limited = np.where((spi_anomalies[fd_type] > -1) & (pet_anomalies[fd_type] > 1), 1, 0)
+            both_limited = np.where((spi_anomalies[fd_type] < -1) & (pet_anomalies[fd_type] > 1), 1, 0)
+            moisture_condition = np.where(spi_anomalies[fd_type] < -1, 1, 0)
+            energy_condition = np.where(pet_anomalies[fd_type] > 1, 1, 0)
+
+            # Relative percentage of FD events
+            moisture_limited_regime = np.nansum(moisture_limited) * 100/spi_anomalies[fd_type].size
+            energy_limited_regime = np.nansum(energy_limited) * 100/spi_anomalies[fd_type].size
+            both_limited_regime = np.nansum(both_limited) * 100/spi_anomalies[fd_type].size
+            moisture_condition_regime = np.nansum(moisture_condition) * 100/spi_anomalies[fd_type].size
+            energy_condition_regime = np.nansum(energy_condition) * 100/spi_anomalies[fd_type].size
+
+            bar_data.append([moisture_condition_regime, energy_condition_regime, moisture_limited_regime, energy_limited_regime, both_limited_regime])
+
+            # Standard deviations of relative FD events
+            moisture_limited_regime = np.nanstd(moisture_limited * 100/spi_anomalies[fd_type].size)*1700
+            energy_limited_regime = np.nanstd(energy_limited * 100/spi_anomalies[fd_type].size)*1700
+            both_limited_regime = np.nanstd(both_limited * 100/spi_anomalies[fd_type].size)*1700
+            moisture_condition_regime = np.nanstd(moisture_condition * 100/spi_anomalies[fd_type].size)*1700
+            energy_condition_regime = np.nanstd(energy_condition * 100/spi_anomalies[fd_type].size)*1700
+
+            bar_std.append([moisture_condition_regime, energy_condition_regime, moisture_limited_regime, energy_limited_regime, both_limited_regime])
+
+        # Tick labels
+        x_ticks = ['SPI<-1', 'PET>1', 'SPI<-1 &\nPET<1', 'SPI>-1 &\nPET>1', 'SPI<-1 &\nPET>1']
+        savename = 'test_barplot.png'
+        make_barplots(bar_data, 
+                      fd_types, 
+                      'Relative Number (%) of FDs\nwith Given Conditions',
+                      x_ticks,
+                      bar_err = bar_std,
+                      path = './',
+                      savename = savename)
+        
+    if test_scatterplot:
+        # Make a test run for scatter plots to refine them
+        from scipy import stats
+        from statistics_calculations import least_squares
+
+        # Generate test data for FD counts, and r and pvals.
+        freq = []
+        freq_sum = []
+        freq_win = []
+
+        # Make the hypthesis testing for correlation
+        rng = np.random.default_rng()
+        test_method = stats.MonteCarloMethod(n_resamples = 100, rvs = (rng.normal, rng.normal))
+        for fd_type in fd_types:
+            # Generate data to plot
+            if fd_type == 'sesr':
+                initial_generation = np.random.randn(80000) * 20 + 50
+                initial_generation_sum = np.random.randn(80000) * 20 + 50
+                initial_generation_win = np.random.randn(80000) * 20 + 50
+            else:
+                initial_generation = initial_generation * 1.2 + (np.random.randn(80000)* 20 + 50)/4
+                initial_generation_sum = initial_generation_sum * 0.8 + (np.random.randn(80000)* 20 + 50)/5
+                initial_generation_win = initial_generation_win * 1.5 + (np.random.randn(80000)* 20 + 50)/3
+            freq.append(initial_generation)
+            freq_sum.append(initial_generation_sum)
+            freq_win.append(initial_generation_win)
+
+        # Calculate correlation and pval
+        correlations = np.ones((len(freq), 3))
+        pvals = np.ones((len(freq), 3))
+        slopes = np.ones((len(freq), 3))
+        intercepts = np.ones((len(freq), 3))
+        for i in range(len(freq)):
+            # Determine the other frequency to correlate the current one with
+            alt_ind = i + 1
+            if alt_ind >= len(freq):
+                alt_ind = 0
+
+            # Perform correlation
+            results = stats.pearsonr(freq[i], freq[alt_ind], method = test_method)
+            correlations[i,0] = results.statistic
+            pvals[i,0] = results.pvalue
+
+            results = stats.pearsonr(freq_sum[i], freq_sum[alt_ind], method = test_method)
+            correlations[i,1] = results.statistic
+            pvals[i,1] = results.pvalue
+
+            results = stats.pearsonr(freq_win[i], freq_win[alt_ind], method = test_method)
+            correlations[i,2] = results.statistic
+            pvals[i,2] = results.pvalue
+
+            # Determine regression values
+            slopes[i,0], intercepts[i,0], _ = least_squares(freq[i], freq[alt_ind])
+            slopes[i,1], intercepts[i,1], _ = least_squares(freq_sum[i], freq_sum[alt_ind])
+            slopes[i,2], intercepts[i,2], _ = least_squares(freq_win[i], freq_win[alt_ind])
+
+        make_scatterplots(freq, 
+                          freq_sum, 
+                          freq_win, 
+                          correlations, 
+                          pvals, 
+                          fd_types, 
+                          ['Annual', 'MAMJJA', 'SONDJF'],
+                          slope = slopes, 
+                          intercept = intercepts,  
+                          path = './', 
+                          savename = 'test_scatterplots.png')
 
 

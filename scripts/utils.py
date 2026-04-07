@@ -1,5 +1,8 @@
 import numpy as np
+from scipy import stats
+from scipy.special import gamma, gammainc
 from datetime import datetime, timedelta
+from tqdm import tqdm
 from typing import Tuple
 
 # All acceptable subsets and their upper and low lat/lon
@@ -233,6 +236,87 @@ def vapor_pressure_deficit(
 
     return vpd
 
+def calculate_spi(precip, time, compress = False):
+    '''
+    Calculate the standardized precipitation index (SPI) from precipitation data. 
+    SPI index is on the same time scale as the input data.
+
+    Inputs:
+    :param precip: Input precipitation data (in kg m^-2 s^-1; should be for over 10+ years). Time x lat x lon format
+    :param time: Vector of datetimes corresponding to the timestamp in each timestep in precip.
+    :param compress: Boolean of whether to compress the SPI to float32 to save space. Note this makes the data half as precise.
+
+    Outputs:
+    :param spi: The SPI drought index.
+    '''
+
+    T, I, J = precip.shape
+
+    precipitation = precip*1000 # Convert precipitation from m to mm. Standard precip should be >> 1e-5 now.
+
+    # Individual months and days are needed for later comparisons
+    years = np.array([date.year for date in time])
+    months = np.array([date.month for date in time])
+    days = np.array([date.day for date in time])
+
+    N = int(np.ceil(T/len(np.unique(years)))) # Number of observations per year; round up for leap years
+
+    # Initialize the spi values
+    spi = np.ones((T, I ,J)) * np.nan
+
+    # Reshape everything into 2D arrays for the easier calculations (fewer embedded loops).
+    precipitation = precipitation.reshape(T, I*J)
+    spi = spi.reshape(T, I*J)
+
+    # Create one year of data with a leap year
+    one_year = np.array([datetime(2012, 1, 1) + timedelta(days = day) for day in range(N)])
+
+    for t, date in tqdm(enumerate(one_year[:N]), desc = 'Calculating SPI'):
+        ind = np.where( (months == date.month) & (days == date.day) )[0]
+
+        # Precipitation is dsitribution according to a gamma distribution. Find the parameters of the gamme distribution
+        A = np.log(np.nanmean(precipitation[ind,:]+1e-4, axis = 0)) - np.nansum(np.log(precipitation[ind,:]+1e-4), axis = 0)/N
+        alpha = (1/(4*A)) * (1 + np.sqrt(1+4*A/3))
+        beta = np.nanmean(precipitation[ind,:], axis = 0)/alpha
+
+        for ij in range(I*J):
+            # Transform the values into a normal distribution with mean 0 and standard deviation 1 using the inverse CDF method.
+            # That is, if P has a gamma distribution, then cdf(P) is a uniform distribution. Then cdf_n^-1(cdf(P)) is normally distributed.
+                
+            # cdf_n^-1 is the inverse of the normal cdf
+            # the ppf, percent point function, is the inverse cdf. Its default arguements are mean (loc) = 0, and std (scale) = 1
+
+            cdf = gammainc(alpha[ij], precipitation[ind,ij]/beta[ij])
+
+            q = len(np.where(precipitation[ind,ij] < 0.01)[0])/T # Get the weight of the number of points with precipitation at (or very close to) 0
+            cdf = q + (1-q)*cdf # Ajdust the cdf to account for the precip = 0 grid points
+
+            # Points where the entire cdf is 0s and 1 is biasing the data. Had set the SPI NaN to remove the bias.
+            #### This might be a class imbalance: 
+            #.   Locations where no precip heavily outnumbers precip, the cdfs give no precip a probability of 1 and 0 to everything else.
+            #.   This gives errors for pdf (prob 0 corresponds to -inf on the pdf, and +inf when prob is 1, or unrealistically small/large values when padding
+            #.   is applied.
+            #### Come back later to fix this class imbalance
+            if len(np.where( (cdf > 0.999) | (cdf < 0.001) )) == T:
+                spi[ind,ij] = np.nan
+                continue
+
+            # "Pad" the extreme cdf probability values (near 1 or 0) to prevent the calculated distribution from returning +/- inf
+            cdf = np.where((cdf > 0.999), cdf-0.001, cdf)
+            cdf = np.where((cdf < 0.001), cdf+0.001, cdf)
+
+            spi[ind,ij] = stats.norm.ppf(cdf, loc = 0, scale = 1)
+
+
+    # Return SPI to a 3D format
+    spi = spi.reshape(T, I, J)
+
+    # Compress the data?
+    # if compress:
+    #     spi = spi.astype(np.float32)
+
+    return spi
+
 def standardize_variable(
         variable, 
         dates_all, 
@@ -325,7 +409,7 @@ def standardize_variable(
         # Find the date index for the one year range
         ind = np.where( (date.month == months) & (date.day == days) )[0]
         
-        # Standardize the ESR to get SESR
+        # Standardize the variable
         anomalies[t,:,:] = (variable[t,:,:] - means[ind[0],:,:])/stds[ind[0],:,:]
 
     anomalies = anomalies.astype(np.float32)
