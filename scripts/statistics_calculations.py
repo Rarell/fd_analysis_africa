@@ -21,12 +21,15 @@ def least_squares(x, y) -> Tuple[float, float]:
     T = x.size
     
     # Initialize some variables
-    t = np.arange(T)
-    E = np.ones((T, 2))
+    if len(x.shape) > 1:
+        E = x
+    else:
+        t = np.arange(T)
+        E = np.ones((T, 2))
     
-    # Define the model matrix
-    E[:,0] = x # x estimates
-    E[:,1] = 1 # bias term
+        # Define the model matrix
+        E[:,0] = x # x estimates
+        E[:,1] = 1 # bias term
     
     # Use least squares (matrix form) to find the linear regression
     invEtE = np.linalg.inv(np.dot(E.T, E))
@@ -34,6 +37,8 @@ def least_squares(x, y) -> Tuple[float, float]:
 
     yhat = np.dot(E, xhat)
     
+    if len(x.shape) > 1:
+        return xhat
     if len(y.shape) > 1:
         return xhat[0,:], xhat[1,:], yhat
     else:
@@ -97,10 +102,10 @@ def monte_carlo_significance(x, y, original_statistic, N = 5000, statistic = 're
         T = x.size
 
     ind = np.random.randint(0, T, (N, T))
-    print(ind.shape)
+    # print(ind.shape)
 
     mc = np.ones((IJ, N)) * np.nan
-    print(mc.shape)
+    # print(mc.shape)
 
     for n, i in tqdm(enumerate(ind)):
         if statistic == 'regression':

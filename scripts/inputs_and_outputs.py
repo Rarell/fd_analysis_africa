@@ -8,31 +8,60 @@ from datetime import datetime, timedelta
 from utils import wind_speed, vapor_pressure_deficit
 
 raw_data_paths = {
-    'tair': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/temperature',
-    'd2m': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/moisture_surface', 
-    'sp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/pressure', 
-    'ws': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/wind_speed', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/wind_speed'],
-    'e': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/evaporation', 
-    'pev': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/potential_evaporation', 
-    'tp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/precipitation', 
-    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/moisture_surface'], 
-    'swvl1': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm', 
-    'swvl2': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm', 
-    'swvlrz': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm']
+    'tair': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/temperature',
+    'd2m': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/moisture_surface', 
+    'sp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/pressure', 
+    'ws': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/wind_speed', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/wind_speed'],
+    'e': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/evaporation', 
+    'pev': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/potential_evaporation', 
+    'tp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/precipitation', 
+    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/moisture_surface'], 
+    'swvl1': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', 
+    'swvl2': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', 
+    'swvlrz': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm']
 }
 
 raw_data_base_names = {
-    'tair': 'africa_2m_temperature_',
-    'd2m': 'africa_2m_dewpoint_', 
-    'sp': 'africa_surface_pressure_', 
-    'ws': ['africa_10m_u_component_of_wind_', 'africa_10m_v_component_of_wind_'], 
-    'e': 'africa_evaporation_', 
-    'pev': 'africa_potential_evaporation_', 
-    'tp': 'africa_total_precipitation_', 
-    'vpd': ['africa_2m_temperature_', 'africa_2m_dewpoint_'], 
-    'swvl1': 'africa_volumetric_soil_water_layer_1_', 
-    'swvl2': 'africa_volumetric_soil_water_layer_2_', 
-    'swvlrz': ['africa_volumetric_soil_water_layer_1_', 'africa_volumetric_soil_water_layer_2_']
+    'era5': {
+        'tair': 'africa_2m_temperature_',
+        'd2m': 'africa_2m_dewpoint_', 
+        'sp': 'africa_surface_pressure_', 
+        'ws': ['africa_10m_u_component_of_wind_', 'africa_10m_v_component_of_wind_'], 
+        'e': 'africa_evaporation_', 
+        'pev': 'africa_potential_evaporation_', 
+        'tp': 'africa_total_precipitation_', 
+        'vpd': ['africa_2m_temperature_', 'africa_2m_dewpoint_'], 
+        'swvl1': 'africa_volumetric_soil_water_layer_1_', 
+        'swvl2': 'africa_volumetric_soil_water_layer_2_', 
+        'swvlrz': ['africa_volumetric_soil_water_layer_1_', 'africa_volumetric_soil_water_layer_2_']
+    },
+    'gldas': {
+        'tair': 'africa_gldas.temperature.daily_',
+        'd2m': 'africa_2m_dewpoint_', 
+        'sp': 'africa_gldas.pressure.daily_', 
+        'ws': 'africa_gldas.wind_speed.daily_', 
+        'e': 'africa_gldas.evaporation.daily_', 
+        'pev': 'africa_gldas.potential_evaporation.daily_', 
+        'tp': 'africa_gldas.precipitation.daily_', 
+        'vpd': ['africa_gldas.temperature.daily_', 'africa_2m_dewpoint_'], 
+        'swvl1': 'africa_gldas.soil_moisture_0-10cm.daily_', 
+        'swvl2': 'africa_gldas.soil_moisture_10-40cm.daily_', 
+        'swvlrz': ['africa_gldas.soil_moisture_0-10cm.daily_', 'africa_gldas.soil_moisture_10-40cm.daily_']
+    }
+}
+
+gldas_snames = {
+    'tair': 'temp',
+    'd2m': 'd2m', 
+    'sp': 'pres', 
+    'ws': 'wspd', 
+    'e': 'evap', 
+    'pev': 'pevap', 
+    'tp': 'precip', 
+    'vpd': 'vpd', 
+    'swvl1': 'soilm', 
+    'swvl2': 'soilm', 
+    'swvlrz': 'swvlrz'
 }
 
 def load_fd_one_year(
@@ -146,15 +175,30 @@ def load_index_one_year(
 
     return index_data
 
-def load_raw_data(sname):
+def load_raw_data(sname, model):
     '''
     Load a set of raw data for a given variable
     '''
     # Collect the path to the variable
     path = raw_data_paths[sname]
+    if isinstance(path, list) & (sname != 'vpd') & (sname != 'ws'):
+        path = [p%model for p in path]
+    elif (sname == 'ws') & (model == 'era5'):
+        path = [p%model for p in path]
+    elif isinstance(path, list):
+        path = [path[0]%model, path[1]]
+    elif (sname == 'd2m'):
+        path = path
+    elif (model == 'gldas') & (sname == 'ws'):
+        path = path[0]
+    else:
+        path = path%model
 
     # Collect the base names of the variable
-    base_fn = raw_data_base_names[sname]
+    base_fn = raw_data_base_names[model][sname]
+
+    if model == 'gldas':
+        sname = gldas_snames[sname]
 
     # Collect the base names of the variable
     if isinstance(base_fn, list):
@@ -181,8 +225,11 @@ def load_raw_data(sname):
         elif sname == 'vpd':
             # Load T and T_d
             with Dataset(file, 'r') as nc:
-                keys = nc.variables.keys()
-                sname_t = 'tair' if 'tair' in keys else 't2m'
+                if model == 'era5':
+                    keys = nc.variables.keys()
+                    sname_t = 'tair' if 'tair' in keys else 't2m'
+                else:
+                    sname_t = sname
                 tair = nc.variables[sname_t][:]
             
             with Dataset(files_2[n], 'r') as nc:
@@ -192,15 +239,15 @@ def load_raw_data(sname):
             vpd = vapor_pressure_deficit(tair, tdew)
             data.append(vpd)
         elif sname == 'swvlrz':
-            # Load T and T_d
+            # Load soil moisture for the two root zone layers
             with Dataset(file, 'r') as nc:
-                sm1 = nc.variables['swvl1'][:]
+                sm1 = nc.variables['swvl1'][:] if model == 'era5' else nc.variables['soilm'][:]
             
             with Dataset(files_2[n], 'r') as nc:
-                sm2 = nc.variables['swvl2'][:]
+                sm2 = nc.variables['swvl2'][:] if model == 'era5' else nc.variables['soilm'][:]
 
             # Calculate RZSM
-            rzsm = (7/28) * sm1 + (21/28) * sm2
+            rzsm = (7/28) * sm1 + (21/28) * sm2 if model == 'era5' else (10/40) * sm1 + (30/40) * sm2
             data.append(rzsm)
         elif sname == 'tair':
             # Load the data; note with T, some snames may be t2m instead of tair

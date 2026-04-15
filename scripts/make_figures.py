@@ -126,7 +126,7 @@ def make_statistics_maps(data, lat, lon, statistic, fd_types, times, cmin = 0, c
     plt.show(block = False)
     plt.close()
 
-def make_trend_maps(data, lat, lon, statistic, fd_types, times, cmin = -1, cmax = 1, significance_plots = False, path = './', savename = 'tmp.png'):
+def make_trend_maps(data, lat, lon, statistic, fd_types, times, sig = None, cmin = -1, cmax = 1, significance_plots = False, path = './', savename = 'tmp.png'):
     """
     Make a set of maps for trends in FD characteristics (and statistical significance) (frequency, intensity, or duration)
     """
@@ -141,12 +141,13 @@ def make_trend_maps(data, lat, lon, statistic, fd_types, times, cmin = -1, cmax 
     clevs = np.arange(cmin, cmax + cint, cint)
     nlevs = len(clevs)
     if significance_plots:
-        cmap  = plt.get_cmap(name = 'Paired', lut = nlevs)
+        # cmap = plt.get_cmap(name = 'Paired', lut = nlevs)
+        cmap = mcolors.ListedColormap(['#FF796C', '#DC143C', '#7BC8F6', '#0000FF'])
     else:
         if statistic == 'severity':
-            cmap  = plt.get_cmap(name = 'BrBG', lut = nlevs)
+            cmap = plt.get_cmap(name = 'BrBG', lut = nlevs)
         else:
-            cmap  = plt.get_cmap(name = 'BrBG_r', lut = nlevs)
+            cmap = plt.get_cmap(name = 'BrBG_r', lut = nlevs)
 
     # Lonitude and latitude tick information
     lat_int = 10
@@ -210,8 +211,10 @@ def make_trend_maps(data, lat, lon, statistic, fd_types, times, cmin = -1, cmax 
             # Plot the data
             if significance_plots:
                 # Determine areas of statistical significance
-                significance_data = np.where((data[i][j] > (1-alpha/2)) | (data[i][j] < (alpha/2)), 1, 0)
-                cs = axes[i,j].pcolormesh(lon, lat, significance_data, vmin = 0, vmax = 1,
+                significance_data = np.where(((sig[i][j] > (1-alpha/2)) | (sig[i][j] < (alpha/2))) & (data[i][j] > 0), 1, 0)
+                significance_data = np.where(((sig[i][j] < (1-alpha/2)) & (sig[i][j] > (alpha/2))) & (data[i][j] < 0), 2, significance_data)
+                significance_data = np.where(((sig[i][j] > (1-alpha/2)) | (sig[i][j] < (alpha/2))) & (data[i][j] < 0), 3, significance_data)
+                cs = axes[i,j].pcolormesh(lon, lat, significance_data, vmin = 0, vmax = 3,
                                           cmap = cmap, transform = proj, zorder = 1)
             else:
                 cs = axes[i,j].pcolormesh(lon, lat, data[i][j], vmin = cmin, vmax = cmax,
@@ -244,10 +247,12 @@ def make_trend_maps(data, lat, lon, statistic, fd_types, times, cmin = -1, cmax 
     
     else:
         # Custom patches
-        not_sig = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.0), edgecolor = 'k', label = 'Not Significant')
-        sig = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(1.0), edgecolor = 'k', label = 'Significant')
+        not_sig_pos = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.0), edgecolor = 'k', label = 'Not Significant Increasing')
+        sig_pos = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.25), edgecolor = 'k', label = 'Significant Increasing')
+        not_sig_neg = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.50), edgecolor = 'k', label = 'Not Significant Decreasing')
+        sig_neg = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.75), edgecolor = 'k', label = 'Significant Decreasing')
         # Add boxes indicating significance colors
-        fig.legend(handles = [not_sig, sig], bbox_to_anchor = (0.65, 0.1), frameon = False, ncols = len([not_sig, sig]), fontsize = 22) # loc = 'lower center',
+        fig.legend(handles = [not_sig_pos, sig_pos, not_sig_neg, sig_neg], bbox_to_anchor = (0.75, 0.1), frameon = False, ncols = len([not_sig_pos, sig_pos]), fontsize = 22) # loc = 'lower center',
             
     # Save the figure
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
@@ -615,6 +620,31 @@ def make_barplots(data, labels, ylabel, xtick_labels, bar_err = None, path = './
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
     plt.show(block = False)
 
+def make_errorbar_plot(x, y, yerr, xlabel, ylabel, path = './', savename = 'tmp.png'):
+    '''
+    Make an errorbar plot
+    '''
+    plt.ticklabel_format(axis = 'both', useMathText = True)
+
+    # Initialize the figure
+    fig, ax = plt.subplots(figsize = [14, 8], nrows = 1, ncols = 1)
+
+    # Make the errorbar plot
+    ax.errorbar(x, y, yerr = yerr, color = 'r', fmt = 'o')
+
+    # Set the labels
+    ax.set_ylabel(ylabel, fontsize = 22)
+    ax.set_xlabel(xlabel, fontsize = 22)
+
+    # Set the tick size
+    ax.yaxis.get_offset_text().set_fontsize(22)
+    for i in ax.xaxis.get_ticklabels() + ax.yaxis.get_ticklabels():
+        i.set_size(22)
+
+    # Save the figure
+    plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
+    plt.show(block = False)
+
 
 def timeseries_plot(x, y, slopes, intercepts, p_values, fd_types, label, times, path = './', savename = 'tmp.png'):
     '''
@@ -741,6 +771,110 @@ def make_scatterplots(x, y, z, r, pval, labels, suptitles, slope = None, interce
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
     plt.show(block = False)
 
+def make_eof_plot(regression_patterns, lat, lon, pcs, times, variable, mode, var_explained, path = './', savename = 'tmp.png'):
+    '''
+    Make a plot of an EOF regression pattern with the PCs under it
+    '''
+
+    # Set colorbar information 
+    
+    cmax = np.nanmax(np.abs(regression_patterns)); cmin = -1.0 * cmax
+    cint = (cmax - cmin)/50
+    clevs = np.arange(cmin, cmax + cint, cint)
+    nlevs = len(clevs)
+    cmap  = plt.get_cmap(name = 'coolwarm', lut = nlevs)
+
+    # Lonitude and latitude tick information
+    lat_int = 10
+    lon_int = 20
+    
+    LatLabel = np.arange(-90, 90, lat_int)
+    LonLabel = np.arange(-180, 180, lon_int)
+    
+    LonFormatter = cticker.LongitudeFormatter()
+    LatFormatter = cticker.LatitudeFormatter()
+
+    # Projection information
+    proj = ccrs.PlateCarree()
+
+    # Initialize the figure
+    fig = plt.figure(figsize = [20,26])
+    ax1 = fig.add_subplot(3,2,(1,4), projection = proj) # 3 rows, 2 cols, and this figure will take the first two rows and two columns
+
+    # Set the title
+    ax1.set_title('%s Regression onto Mode %d Princple Component, Var Explained = %5.3f'%(variable.upper(), mode, var_explained), fontsize = 22)
+
+    # Add ocean features
+    ax1.add_feature(cfeature.OCEAN, facecolor = 'white', edgecolor = 'white', zorder = 2)
+
+    # Add coastlines and country borders
+    ax1.coastlines(edgecolor = 'black', zorder = 3)
+    ax1.add_feature(cfeature.BORDERS, facecolor = 'none', edgecolor = 'black', zorder = 3)
+
+    ax1.set_yticklabels(LatLabel, fontsize = 26)
+    ax1.yaxis.set_major_formatter(LatFormatter)
+    
+    ax1.set_xticklabels(LonLabel, fontsize = 26)
+    ax1.xaxis.set_major_formatter(LonFormatter)
+    
+    # Adjust the ticks
+    ax1.set_xticks(LonLabel, crs = proj)
+    ax1.set_yticks(LatLabel, crs = proj)
+
+    # Plot the data
+    cs = ax1.pcolormesh(lon, lat, regression_patterns, vmin = cmin, vmax = cmax,
+                        cmap = cmap, transform = proj, zorder = 1)
+        
+    # Set the colorbar size and location
+    cbax = fig.add_axes([0.840, 0.3885, 0.030, 0.480])
+
+    label = 'Regression Slope'
+
+    cbar = mcolorbar.Colorbar(cbax, mappable = cs, cmap = cmap, extend = 'both', orientation = 'vertical')
+
+    # Make the colorbar label
+    cbar.ax.set_ylabel(label, fontsize = 22)
+
+    # Set the colorbar tick size
+    for i in cbar.ax.yaxis.get_ticklabels():
+        i.set_size(22)
+
+    # Set the map extent
+    ax1.set_extent([lower_lon, upper_lon, lower_lat, upper_lat])
+
+    ax2 = fig.add_subplot(3,2,(5,6))
+
+    # Set the title
+    ax2.set_title('Principle Component Timeseries for Mode %d'%mode, fontsize = 22)
+
+    # Plot the PC
+    ax2.plot(times, pcs, 'b-', linewidth = '2')
+    ax2.axhline(0, 0, 1, linestyle = '--', color = 'k', linewidth = 2)
+
+    # Set the labels
+    ax2.set_xlabel('Time', fontsize = 22)
+    ax2.set_ylabel('Index - %s'%variable.upper(), fontsize = 22)
+
+    # Set ticks
+    years = YearLocator(5)
+    months = MonthLocator(10)
+
+    years_format = DateFormatter('%Y')
+
+    ax2.xaxis.set_major_locator(years)
+    ax2.xaxis.set_minor_locator(months)
+    ax2.xaxis.set_major_formatter(years_format)
+
+    for i in ax2.xaxis.get_ticklabels() + ax2.yaxis.get_ticklabels():
+        i.set_size(22)
+
+
+    # Save the figure
+    plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
+    plt.show(block = False)
+    plt.close()
+
+
 def create_regional_boxes(savename = 'tmp.png', path = './'):
     '''
     Create a map displaying how an area is split into different regions
@@ -848,9 +982,11 @@ if __name__ == '__main__':
     # Test and refine some of the figures
     from netCDF4 import Dataset
 
+    test_trend_sig = True
     test_correlation = False
     test_barplot = False
     test_scatterplot = False
+    test_eof_plot = False
 
     # Determine FD types
     fd_types = ['sesr', 'rzsm', 'fdii']
@@ -864,7 +1000,7 @@ if __name__ == '__main__':
     var_list = ['tair', 'sp', 'd2m']
 
     # Load test dataset to obtain lats and lons
-    with Dataset('%s/%s2000.nc'%('../data', fn_bases[0]), 'r') as nc:
+    with Dataset('%s/%s/%s2000.nc'%('../data', 'era5', fn_bases[0]), 'r') as nc:
         lat = nc.variables['lat'][:]
         lon = nc.variables['lon'][:]
 
@@ -872,6 +1008,35 @@ if __name__ == '__main__':
     lon_tmp = lon[:,lon_ind]
     lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
     
+    if test_trend_sig:
+        slope_map = []
+        map_pval = []
+        for fd_type in fd_types:
+            # Generate random data
+            slope = np.random.randn(lat.shape[0], lat.shape[1])
+            slope_sum = np.random.randn(lat.shape[0], lat.shape[1])
+            slope_win = np.random.randn(lat.shape[0], lat.shape[1])
+            
+            pval = np.random.random_sample((lat.shape))
+            pval_sum = np.random.random_sample((lat.shape))
+            pval_win = np.random.random_sample((lat.shape))
+
+            slope_map.append([slope, slope_sum, slope_win])
+            map_pval.append([pval, pval_sum, pval_win])
+
+        make_trend_maps(slope_map,
+                        lat, 
+                        lon, 
+                        'frequency', 
+                        fd_types, 
+                        ['Annual', 'MAMJJA', 'SONDJF'], 
+                        sig = map_pval,
+                        cmin = 0, 
+                        cmax = 3, 
+                        significance_plots = True, 
+                        path = './', 
+                        savename = 'test_trend_sig.png')
+
     # Initialize some datasets
     if test_correlation:
         r = {}; sig = {}
@@ -1020,5 +1185,34 @@ if __name__ == '__main__':
                           intercept = intercepts,  
                           path = './', 
                           savename = 'test_scatterplots.png')
+
+    if test_eof_plot:
+        from datetime import datetime, timedelta
+
+        # Create filler information
+        start = datetime(1979, 1, 1)
+        end = datetime(2024, 12, 31)
+        Ndays = (end - start).days
+        times = np.array([start + timedelta(days = day) for day in range(Ndays)])
+        mode = 1
+        var_explained = 50.423
+
+        # Create dummy data
+        dummy_patterns = np.random.randn(lat.shape[0], lat.shape[1])
+        dummy_pc = np.random.randn(times.size)
+
+        # Smooth the dummy data for the PC
+        runmean = 90
+        dummy_pc = np.convolve(dummy_pc, np.ones((runmean))/runmean)[(runmean-1):]
+        make_eof_plot(dummy_patterns, 
+                      lat, 
+                      lon, 
+                      dummy_pc, 
+                      times, 
+                      'sesr', 
+                      mode, 
+                      var_explained, 
+                      path = './', 
+                      savename = 'test_eof.png')
 
 

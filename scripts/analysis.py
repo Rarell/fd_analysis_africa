@@ -12,7 +12,7 @@ from glob import glob
 
 from statistics_calculations import least_squares, correlate, monte_carlo_significance
 from inputs_and_outputs import load_fd_one_year, load_index_one_year, load_raw_data, load_pickle, save_pickle
-from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots
+from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots, make_errorbar_plot, make_eof_plot
 from utils import standardize_variable, calculate_spi
 
 warnings.filterwarnings('ignore')
@@ -135,17 +135,19 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
     '''
 
     # Find all the files for the identified FD
-    fd_files = glob('%s/%s*.nc'%(args.data_path, fn_base), recursive = True)
+    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
     # print(fd_files)
 
     # Find all index files for severity
-    index_files = glob('%s/%s*.nc'%(args.data_path, index_base), recursive = True)
+    index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
     index_files = np.sort(index_files)
 
     if ('rz' in fn_base) & (index_base is not None):
-        index_files_1 = glob('/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm/africa_volumetric_soil_water_layer_1_*.nc', recursive = True)
-        index_files_2 = glob('/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm/africa_volumetric_soil_water_layer_2_*.nc', recursive = True)
+        sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
+        sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
+        index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
+        index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base2), recursive = True)
         index_files_1 = np.sort(index_files_1)
         index_files_2 = np.sort(index_files_2)
 
@@ -176,9 +178,11 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
 
         # Load one year of data of the appropiate index
         if ind_sname is not None:
+            if (args.model == 'gldas') & ('swvl' in ind_sname):
+                ind_sname = 'soilm'
             if 'rz' in index_base:
                 index_files_combined = [index_files_1[t], index_files_2[t]]
-                ind_snames = ['swvl1', 'swvl2']
+                ind_snames = ['swvl1', 'swvl2'] if args.model == 'era5' else ['soilm', 'soilm']
                 index_data = load_index_one_year(index_files_combined, ind_snames, index_base, times = times, I = I, J = J)
             else:
                 index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, I = I, J = J)
@@ -232,7 +236,7 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
                                                                                           mask[i,j],
                                                                                           None,
                                                                                           j,
-                                                                                          fdii = False if ind_sname is not None else True,)
+                                                                                          False if ind_sname is not None else True)
 
         # for t in range(1, T): # Start from t = 1; t = 0 is assumed to have no FD at the start of data
         #     FD_occurence = np.where( (fd[t,:,:] > 0) & np.invert(fd[t-1,:,:] > 0), 1, 0)
@@ -256,23 +260,25 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
     # Determine if the calculations has already been done
     level = 'rz' if args.level == 0 else str(args.level)
     filename = '%s_fd_characteristics_by_year_%s_level_%s.pkl'%(fd_type, times, level)
-    if os.path.exists('%s/%s'%(args.data_path, filename)):
-        frequency, duration, severity = load_pickle('%s/%s'%(args.data_path, filename))
+    if os.path.exists('%s/%s/%s'%(args.data_path, args.model, filename)):
+        frequency, duration, severity = load_pickle('%s/%s/%s'%(args.data_path, args.model, filename))
         return frequency, duration, severity
 
     # Find all the files for the identified FD
     # Note files are data for 1 year of data
-    fd_files = glob('%s/%s*.nc'%(args.data_path, fn_base), recursive = True)
+    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
     # print(fd_files)
 
     # Find all index files for severity
-    index_files = glob('%s/%s*.nc'%(args.data_path, index_base), recursive = True)
+    index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
     index_files = np.sort(index_files)
 
     if ('rz' in fn_base) & (index_base is not None):
-        index_files_1 = glob('/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm/africa_volumetric_soil_water_layer_1_*.nc', recursive = True)
-        index_files_2 = glob('/ourdisk/hpc/ai2es/sedris/fd_analysis/data/liquid_vsm/africa_volumetric_soil_water_layer_2_*.nc', recursive = True)
+        sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
+        sm_base1 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
+        index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
+        index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model. sm_base2), recursive = True)
         index_files_1 = np.sort(index_files_1)
         index_files_2 = np.sort(index_files_2)
 
@@ -282,7 +288,7 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
 
     # Load 40th percentile threshold (for severity calculations) if necessary
     if ind_sname is not None:
-        with Dataset('%s/africa_%s_40_percent_thresh.nc'%(args.data_path, ind_sname), 'r') as nc:
+        with Dataset('%s/%s/africa_%s_40_percent_thresh.nc'%(args.data_path, args.model, ind_sname), 'r') as nc:
             thresholds = nc.variables['thresholds'][:]
 
     # Initialize FD frequency data (total FDs in dataset; starts count at 0)
@@ -302,9 +308,11 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
 
         # Load one year of data of the appropiate index
         if ind_sname is not None:
+            if (args.model == 'gldas') & ('swvl' in ind_sname):
+                ind_sname = 'soilm'
             if 'rz' in index_base:
                 index_files_combined = [index_files_1[t], index_files_2[t]]
-                ind_snames = ['swvl1', 'swvl2']
+                ind_snames = ['swvl1', 'swvl2'] if args.model == 'era5' else ['soilm', 'soilm']
                 index_data = load_index_one_year(index_files_combined, ind_snames, index_base, times = times, I = I, J = J)
             else:
                 index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, I = I, J = J)
@@ -353,7 +361,7 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
     severity[severity == 0] = np.nan
 
     # Save results to pickle file so the calculations don't need to be repeated
-    save_pickle('%s/%s'%(args.data_path, filename), [frequency, duration, severity], ['freq', 'dur', 'sev'])
+    save_pickle('%s/%s/%s'%(args.data_path, args.model, filename), [frequency, duration, severity], ['freq', 'dur', 'sev'])
         
     return frequency, duration, severity
 
@@ -363,7 +371,7 @@ def load_start_times(args, fn_base, sname):
     '''
 
     # Find all the files for the identified FD
-    fd_files = glob('%s/%s*.nc'%(args.data_path, fn_base), recursive = True)
+    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
 
     fd_total = []
@@ -425,7 +433,7 @@ def trend_analysis(x, y):
     slope, intercept, yhat = least_squares(x, y)
 
     # Perform significance test (via Monte-Carlo Bootstrapping)
-    pval = monte_carlo_significance(x.copy(), y.copy(), slope.copy())
+    pval = monte_carlo_significance(x.copy(), y.copy(), slope.copy(), N = 500)
 
     # Reshape if necessary
     if len(y.shape) > 1:
@@ -433,6 +441,92 @@ def trend_analysis(x, y):
         pval = pval.reshape(I, J)
 
     return slope, intercept, pval
+
+
+def eof_analysis(args, fd_idx, mask, lat, lon, times, lon_ind, var_sname):
+    T, I, J = fd_idx.shape
+    fd_idx = fd_idx.reshape(T, I*J).astype(np.float32)
+    mask2d = mask.reshape(I*J)
+
+    # Detrend data
+    print('Detrending data')
+    t = np.arange(T)
+    _, _, fd_trend = least_squares(t, fd_idx)
+    fd_idx = fd_idx - fd_trend
+
+    # Apply cosine latitude weighting and replace missing values with 0
+    print('Applying weights')
+    weights = np.sqrt(np.cos(np.pi * lat/180).reshape(I*J))
+    fd_idx = fd_idx * weights[np.newaxis,:]
+
+    # Replace missing values with 0
+    print('Removing NaNs')
+    fd_idx = np.delete(fd_idx, mask2d == 0, axis = -1)
+    fd_idx = np.where(np.isnan(fd_idx), 0, fd_idx)
+
+    # EOFs of each index variable
+    print('Data prepared; performing SVD')
+    # C = (np.dot(fd_idx.T, fd_idx)/T).astype(np.float32) # space x space matrix
+    PCs, sig, EOFs = np.linalg.svd(fd_idx)
+    eigval = (sig**2)/T
+    # del C; gc.collect()
+
+    # Standardize PCs
+    print('Standardizing PCs and getting regression patterns')
+    PCs = (PCs - np.nanmean(PCs, axis = 0))/np.nanstd(PCs, axis = 0)
+
+    # Regress PCs onto EOFS
+    regress_patterns = least_squares(PCs, fd_idx)
+    print(regress_patterns.shape, eigval.size)
+
+    # Make plots
+    var_explained = eigval/np.nansum(eigval) * 100
+    print(f'Variance explained for {var_sname} for first five modes: ', var_explained[:5])
+
+    # Create the EOF plots (for the top three modes)
+    for mode in range(1, 3+1):
+        savename = '%s_eof_mode_%d.png'%(var_sname, mode)
+
+        # Replace the NaN values and fill with regression pattern
+        regress_map = np.zeros((I, J)) * np.nan
+        regress_map = regress_map.reshape(I*J)
+        k = 0
+        for ij in range(I*J):
+            if mask2d[ij] == 1:
+                regress_map[ij] = regress_patterns[mode-1,k]
+                k = k + 1
+        regress_map = regress_map.reshape(I, J)
+
+        # Correct longitude issues
+        tmp = regress_map[:,lon_ind]
+        regress_map = np.concatenate([tmp, regress_map[:,:lon_ind[0]]], axis = -1)
+
+        # Perform a 90 day running mean on PC to smooth out the time series
+        runmean = 90
+        PCs[1:,mode-1] = np.convolve(PCs[1:,mode-1], np.ones((runmean))/runmean)[(runmean-1):]
+
+        make_eof_plot(regress_map, 
+                        lat, 
+                        lon, 
+                        PCs[1:,mode-1], 
+                        times, 
+                        var_sname, 
+                        mode, 
+                        var_explained[mode-1], 
+                        path = '%s/%s'%(args.figure_path, args.model), 
+                        savename = savename)
+
+    # Significance plots
+    N = eigval.size
+    # Possible title: Eigen Value for Each Mode with Standard Error
+    delta_lambda = eigval * np.sqrt(2/N)
+    modes = np.arange(1, 15+1)
+    savename = '%s_eigen_confidence_interval.png'%var_sname
+    make_errorbar_plot(modes, eigval[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
+
+    # Remove larger files to free up space for next analysis
+    del fd_idx, PCs, EOFs, sig, eigval, delta_lambda, regress_patterns
+    gc.collect()
     
 
 if __name__ == '__main__':
@@ -454,8 +548,10 @@ if __name__ == '__main__':
     parser.add_argument('--skip_variable_boxplots', action = 'store_false', help = 'Skip making the variable anomaly boxplots in the sensitivity analysis')
     parser.add_argument('--skip_correlation_plots', action = 'store_false', help = 'Skip the correlation analysis in the sensitivity analysis')
     parser.add_argument('--skip_energy_moisture_drivers', action = 'store_false', help = 'Skip the moisture/energy limited analysis')
+    parser.add_argument('--skip_eof_analysis', action = 'store_false', help = 'Skip the EOF analysis for driving variables')
 
-    parser.add_argument('--level', type = int, default = 0, help = 'ERA5 soil moisture level (must be 0 - 4; 0 means root zone depth)')
+    parser.add_argument('--model', type = str, default = 'era5', help = 'Type of reanalysis data examined (era5 or gldas)')
+    parser.add_argument('--level', type = int, default = 0, help = 'Soil moisture level (must be 0 - 4; 0 means root zone depth)')
     parser.add_argument('--start_year', type = int, default = 1979, help = 'First year in FD dataset')
     parser.add_argument('--end_year', type = int, default = 2024, help = 'Last year in FD dataset')
     parser.add_argument('--nprocesses', type=int, default=1, help='Number of working threads for multiprocesses tasks')
@@ -466,14 +562,26 @@ if __name__ == '__main__':
     # Define the soil moisture level:
     level = 'rz' if args.level == 0 else str(args.level)
 
+    if args.model == 'gldas':
+        if args.level == 0:
+            level_desc = 'rz'
+        elif args.level == 1:
+            level_desc = '0-10cm'
+        elif args.level == 2:
+            level_desc = '10-40cm'
+        elif args.level == 3:
+            level_desc = '40-100cm'
+        elif args.level == 4:
+            level_desc = '100-200cm'
+
     # Types of FD analysis; sesr = Christian et al. 2023 method 
     #                       rzsm = Yuan et al. 2019 method 
     #                       fdii = Otkin et al. 2021 method
     fd_types = ['sesr', 'rzsm', 'fdii']
 
     # Define the .nc keys for the FD datasets
-    fd_snames = ['fd', 'fd%s'%level, 'dro_sev%s'%level]
-    index_snames = ['sesr', 'swvl%s'%level, None]
+    fd_snames = ['fd', 'fd%s'%level, 'fdii%s'%level]
+    index_snames = ['sesr', 'swvl%s'%level, None] # if args.model == 'era5' else 'soilm'
 
     # Define the base of the filename for the FD datasets
     fn_bases = [
@@ -484,22 +592,23 @@ if __name__ == '__main__':
 
     index_bases = [
         'fd_indices/africa_sesr_',
-        'liquid_vsm/africa_volumetric_soil_water_layer_%s_'%level,
+        'liquid_vsm/africa_volumetric_soil_water_layer_%s_'%level if args.model == 'era5' else 'liquid_vsm/africa_gldas.soil_moisture_%s.daily_'%level_desc,
         None
     ]
 
     # Load test dataset to obtain lats and lons
-    with Dataset('%s/%s2000.nc'%(args.data_path, fn_bases[0]), 'r') as nc:
+    with Dataset('%s/%s/%s2000.nc'%(args.data_path, args.model, fn_bases[0]), 'r') as nc:
         lat = nc.variables['lat'][:]
         lon = nc.variables['lon'][:]
 
     # Load the mask
-    with Dataset('%s/aridity_mask.nc'%args.data_path, 'r') as nc:
+    with Dataset('%s/%s/aridity_mask.nc'%(args.data_path, args.model), 'r') as nc:
         mask = nc.variables['aim'][0,:,:]
 
-    lon_ind = np.where(lon[0,:] > 330)[0]
-    lon_tmp = lon[:,lon_ind]
-    lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
+    if args.model == 'era5':
+        lon_ind = np.where(lon[0,:] > 330)[0]
+        lon_tmp = lon[:,lon_ind]
+        lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
 
     # Make figures for FD statistics if desired
     if args.fd_stats_analysis:
@@ -571,11 +680,11 @@ if __name__ == '__main__':
         # Make maps of statistics
         frequencies = [frequency, frequency_sum, frequency_win]
         savename = 'frequency_maps_%s.png'%level
-        make_statistics_maps(frequencies, lat, lon, 'frequency', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 50, path = args.figure_path, savename = savename)
+        make_statistics_maps(frequencies, lat, lon, 'frequency', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 50, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         durations = [duration, duration_sum, duration_win]
         savename = 'duration_maps_%s.png'%level
-        make_statistics_maps(durations, lat, lon, 'duration', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 50, path = args.figure_path, savename = savename)
+        make_statistics_maps(durations, lat, lon, 'duration', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 50, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         # For comparative analysis with different indices, normalize the severities
         max_sev = [np.nanmax(np.abs(severity[n])) for n in range(len(fd_types))]
@@ -584,20 +693,20 @@ if __name__ == '__main__':
         severity_win = [severity_win[n]/max_sev[n] for n in range(len(fd_types))]
         severities = [severity, severity_sum, severity_win]
         savename = 'severity_maps_%s.png'%level
-        make_statistics_maps(severities, lat, lon, 'severity', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = -1, cmax = 0, path = args.figure_path, savename = savename)
+        make_statistics_maps(severities, lat, lon, 'severity', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = -1, cmax = 0, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
         
         # Make box plots of statistics
         box_data = [[frequency[n].flatten(), frequency_sum[n].flatten(), frequency_win[n].flatten()] for n in range(len(fd_types))]
         savename = 'frequency_boxplots_%s.png'%level
-        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'frequency', path = args.figure_path, savename = savename)
+        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'frequency', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         box_data = [[duration[n].flatten(), duration_sum[n].flatten(), duration_win[n].flatten()] for n in range(len(fd_types))]
         savename = 'duration_boxplots_%s.png'%level
-        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'duration', path = args.figure_path, savename = savename)
+        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'duration', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         box_data = [[severity[n].flatten(), severity_sum[n].flatten(), severity_win[n].flatten()] for n in range(len(fd_types))]
         savename = 'severity_boxplots_%s.png'%level
-        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'severity', path = args.figure_path, savename = savename)
+        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'severity', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
     # Trends analysis:
         # Load in one year, do characteristic calculations, load next year, repeat to get annual average per year
@@ -736,19 +845,19 @@ if __name__ == '__main__':
         # Make maps
         characteristic = ['frequency', 'duration', 'severity']
         labels = ['FD Frequency', 'FD Duration', 'FD Severity']
-        cmins = [-0.06, -0.5, -0.0015]
-        cmaxes = [0.06, 0.5, 0.0015]
+        cmins = [-0.06, -0.5, -0.0015] # May need to adjust based on model
+        cmaxes = [0.06, 0.5, 0.0015]   # May need to adjust based on model
 
         for n in range(len(characteristic)):
             # Make the maps
             map_data = slopes[characteristic[n]]
             savename = '%s_trends_maps_%s.png'%(characteristic[n], level)
-            make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = cmins[n], cmax = cmaxes[n], path = args.figure_path, savename = savename)
+            make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = cmins[n], cmax = cmaxes[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
              # Plot the significance
             map_pval = pvals[characteristic[n]]
             savename = '%s_trends_significance_maps_%s.png'%(characteristic[n], level)
-            make_trend_maps(map_pval, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 1, significance_plots = True, path = args.figure_path, savename = savename)
+            make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
             # Make the time series plots
             savename = '%s_timeseries_trends_%s.png'%(characteristic[n], level)
@@ -756,7 +865,7 @@ if __name__ == '__main__':
             overall_slopes_plot = [overall_slopes[0+n], overall_slopes[3+n], overall_slopes[6+n]]
             overall_intercepts_plot = [overall_intercepts[0+n], overall_intercepts[3+n], overall_intercepts[6+n]]
             overall_slopes_pval_plot = [overall_slopes_pval[0+n], overall_slopes_pval[3+n], overall_slopes_pval[6+n]]
-            timeseries_plot(years, overall_ts_plot, overall_slopes_plot, overall_intercepts_plot, overall_slopes_pval_plot, fd_types, characteristic[n], ['Annual', 'MAMJJA', 'SONDJF'], path = args.figure_path, savename = savename)
+            timeseries_plot(years, overall_ts_plot, overall_slopes_plot, overall_intercepts_plot, overall_slopes_pval_plot, fd_types, characteristic[n], ['Annual', 'MAMJJA', 'SONDJF'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         # Repeat for different regions
         
@@ -804,7 +913,10 @@ if __name__ == '__main__':
                 variables_15day = {}
                 for var_sname in variable_snames:
                     # Load the variable
-                    variable = load_raw_data(var_sname)
+                    variable = load_raw_data(var_sname, args.model)
+
+                    if (var_sname == 'pev') & (args.model == 'era5'):
+                        variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
 
                     # Standardize the variable
                     variable = standardize_variable(variable, 
@@ -876,7 +988,7 @@ if __name__ == '__main__':
                 savename = 'variable_anomaly_boxplot_for_fd_%s_%s.png'%(fd_type, level)
                 make_variable_boxplots(box_data, labels, 
                                     ['15 Days before FD', '10 Days before FD', '5 Days before FD', 'Start of FD'],
-                                    fd_type, path = args.figure_path, savename = savename)
+                                    fd_type, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
                 
             if args.skip_correlation_plots:
                 print(fd_type)
@@ -896,7 +1008,10 @@ if __name__ == '__main__':
                 for var_sname in variable_snames:
                     print(var_sname)
                     # Load the variable data
-                    variable = load_raw_data(var_sname)
+                    variable = load_raw_data(var_sname, args.model)
+
+                    if (var_sname == 'pev') & (args.model == 'era5'):
+                        variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
 
                     # Reshape for statistical calculations
                     variable = variable.reshape(T, I*J).astype(np.float32)
@@ -1023,9 +1138,106 @@ if __name__ == '__main__':
                 start_dates, start_dates_ind = load_start_times(args, fn_base, sname)
                 fd_starts[fd_type] = start_dates_ind
 
+            if args.skip_eof_analysis:
+                # Collect index data
+                print('Loading %s and preparing data'%ind_sname)
+                _, fd_idx = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, return_fd_and_indices = True)
+                ind_sname = 'fdii%s'%level if ind_sname is None else ind_sname
+
+                eof_analysis(args, fd_idx, mask, lat, lon, dates_all, lon_ind, ind_sname)
+
+                if ind_sname == 'fdii%s'%level:
+                    # Also conduct analysis with PET, ET, P (SM was already done for Yuan/RZSM method)
+                    analysis_vars = ['tp', 'pev', 'e']
+                    for var in analysis_vars:
+                        variable = load_raw_data(var, args.model)
+                        eof_analysis(args, variable, mask, lat, lon, dates_all, lon_ind, ind_sname)
+
+                # # Reshape to time x space
+                # T, I, J = fd_idx.shape
+                # fd_idx = fd_idx.reshape(T, I*J).astype(np.float32)
+                # mask2d = mask.reshape(I*J)
+
+                # # Detrend data
+                # print('Detrending data')
+                # t = np.arange(T)
+                # _, _, fd_trend = least_squares(t, fd_idx)
+                # fd_idx = fd_idx - fd_trend
+
+                # # Apply cosine latitude weighting and replace missing values with 0
+                # print('Applying weights')
+                # weights = np.sqrt(np.cos(np.pi * lat/180).reshape(I*J))
+                # fd_idx = fd_idx * weights[np.newaxis,:]
+
+                # # Replace missing values with 0
+                # print('Removing NaNs')
+                # fd_idx = np.delete(fd_idx, mask2d == 0, axis = -1)
+                # fd_idx = np.where(np.isnan(fd_idx), 0, fd_idx)
+
+                # # EOFs of each index variable
+                # print('Data prepared; performing SVD')
+                # # C = (np.dot(fd_idx.T, fd_idx)/T).astype(np.float32) # space x space matrix
+                # PCs, sig, EOFs = np.linalg.svd(fd_idx)
+                # eigval = (sig**2)/T
+                # # del C; gc.collect()
+
+                # # Standardize PCs
+                # print('Standardizing PCs and getting regression patterns')
+                # PCs = (PCs - np.nanmean(PCs, axis = 0))/np.nanstd(PCs, axis = 0)
+
+                # # Regress PCs onto EOFS
+                # regress_patterns = least_squares(PCs, fd_idx)
+                # print(regress_patterns.shape, eigval.size)
+
+                # # Make plots
+                # var_explained = eigval/np.nansum(eigval) * 100
+                # print(f'Variance explained for {ind_sname} for first five modes: ', var_explained[:5])
+
+                # # Create the EOF plots (for the top three modes)
+                # for mode in range(1, 3+1):
+                #     savename = '%s_eof_mode_%d.png'%(ind_sname, mode)
+
+                #     # Replace the NaN values and fill with regression pattern
+                #     regress_map = np.zeros((I, J)) * np.nan
+                #     regress_map = regress_map.reshape(I*J)
+                #     k = 0
+                #     for ij in range(I*J):
+                #         if mask2d[ij] == 1:
+                #             regress_map[ij] = regress_patterns[mode-1,k]
+                #             k = k + 1
+                #     regress_map = regress_map.reshape(I, J)
+
+                #     # Correct longitude issues
+                #     tmp = regress_map[:,:,lon_ind]
+                #     regress_map = np.concatenate([tmp, regress_map[:,:,:lon_ind[0]]], axis = 2)
+
+                #     make_eof_plot(regress_map, 
+                #                   lat, 
+                #                   lon, 
+                #                   PCs[1:,mode-1], 
+                #                   dates_all, 
+                #                   ind_sname, 
+                #                   mode, 
+                #                   var_explained[mode-1], 
+                #                   path = '%s/%s'%(args.figure_path, args.model), 
+                #                   savename = savename)
+
+                # # Significance plots
+                # N = eigval.size
+                # # Possible title: Eigen Value for Each Mode with Standard Error
+                # delta_lambda = eigval * np.sqrt(2/N)
+                # modes = np.arange(1, 15+1)
+                # savename = '%s_eigen_confidence_interval.png'%ind_sname
+                # make_errorbar_plot(modes, eigval[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
+
+                # # Remove larger files to free up space for next analysis
+                # del fd_idx, PCs, EOFs, sig, eigval, delta_lambda, regress_patterns
+                # gc.collect()
+                
+
         if args.skip_energy_moisture_drivers:
             # Load precipitation
-            precip = load_raw_data('tp')
+            precip = load_raw_data('tp', args.model)
             T, I, J = precip.shape
 
             lat_ind = np.where((lat[:,0] >= 5) & (lat[:,0] <= 10))[0]
@@ -1039,8 +1251,9 @@ if __name__ == '__main__':
             spi = calculate_spi(precip, dates_all)
 
             # Load the PET
-            pet = load_raw_data('pev')
-            pet = -1*pet# Convert so positive PET represents energy fluxed into the atmosphere
+            pet = load_raw_data('pev', args.model)
+            if args.model == 'era5':
+                pet = -1*pet# Convert so positive PET represents energy fluxed into the atmosphere
 
             # tmp = pet[:,lat_ind,:]
             # pet = tmp[:,:,lon_ind]
@@ -1092,7 +1305,140 @@ if __name__ == '__main__':
                 spi_anomalies[fd_type] = spi_fd
                 pet_anomalies[fd_type] = pet_fd
 
-        
+
+        # EOFs analysis
+        if args.skip_eof_analysis:
+            pass
+
+            # This section of code is used to determine the RMSC
+            # # Load the three indices
+            # _, sesr = calculate_fd_statistics(args, fn_bases[0], fd_snames[0], index_bases[0], index_snames[0], mask, return_fd_and_indices = True)
+            # _, sm = calculate_fd_statistics(args, fn_bases[1], fd_snames[1], index_bases[1], index_snames[1], mask, return_fd_and_indices = True)
+            # _, fdii = calculate_fd_statistics(args, fn_bases[2], fd_snames[2], index_bases[2], index_snames[2], mask, return_fd_and_indices = True)
+
+            # T, I, J = sesr.shape
+            # sesr = sesr.reshape(T, I*J).astype(np.float32)
+            # sm = sm.reshape(T, I*J).astype(np.float32)
+            # fdii = fdii.reshape(T, I*J).astype(np.float32)
+
+            # # Remove masked out values (reduce datasize)
+            # mask2d = mask.reshape(I*J)
+            # sesr = np.delete(sesr, mask2d == 0, axis = -1)
+            # sm = np.delete(sm, mask2d == 0, axis = -1)
+            # fdii = np.delete(fdii, mask2d == 0, axis = -1)
+
+            # # Remove NaNs
+            # sesr = np.where(np.isnan(sesr), 0, sesr)
+            # sm = np.where(np.isnan(sm), 0, sm)
+            # fdii = np.where(np.isnan(fdii), 0, fdii)
+            
+            # for var in variable_snames:
+            #     # Load the variables
+            #     variable = load_raw_data(var, args.model)
+            #     variable = variable.reshape(T, I*J).astype(np.float32)
+            #     variable = np.delete(variable, mask2d == 0, axis = -1)
+            #     variable = np.where(np.isnan(variable), 0, variable)
+
+            #     # Calculate the covariance between the variables and each index
+            #     sesr_cov = np.cov(np.nanmean(sesr, axis = 1), np.nanmean(variable, axis = 1)) # np.cov delivers a covariance matrix; 
+            #     sm_cov = np.cov(np.nanmean(sm, axis = 1), np.nanmean(variable, axis = 1))     # diagonals are the variance, off-diagonals are the covariance
+            #     fdii_cov = np.cov(np.nanmean(fdii, axis = 1), np.nanmean(variable, axis = 1))
+
+            #     # Calculate the RMSC
+            #     sesr_rmsc = np.sqrt(sesr_cov[0,1]**2/(sesr_cov[0,0] * sesr_cov[1,1]))
+            #     sm_rmsc = np.sqrt(sm_cov[0,1]**2/(sm_cov[0,0] * sm_cov[1,1]))
+            #     fdii_rmsc = np.sqrt(fdii_cov[0,1]**2/(fdii_cov[0,0] * fdii_cov[1,1]))
+
+            #     # Give RMSC values and determine if MCA is needed
+            #     print('%s RMSC with SESR: %4.3f'%(var, sesr_rmsc))
+            #     print('%s RMSC with SM%s: %4.3f'%(var, level, sm_rmsc))
+            #     print('%s RMSC with FDII%s: %4.3f'%(var, level, fdii_rmsc))
+
+            # # Detrend data
+            # t = np.arange(T)
+            # _, _, sesr_trend = least_squares(t, sesr)
+            # sesr = sesr - sesr_trend
+            # _, _, sm_trend = least_squares(t, sm)
+            # sm = sm - sm_trend
+            # _, _, fdii_trend = least_squares(t, fdii)
+            # fdii = fdii - fdii_trend
+            # del sesr_trend, sm_trend, fdii_trend
+            # gc.collect()
+
+            # # Apply cosine latitude weighting and replace missing values with 0
+            # weights = np.cos(np.pi * lat/180).reshape(I*J)
+            # sesr = sesr * weights[np.newaxis,:]
+            # sm = sm * weights[np.newaxis,:]
+            # fdii = fdii * weights[np.newaxis,:]
+
+            # # Replace missing values with 0
+            # sesr = np.delete(sesr, mask2d == 0, axis = -1)
+            # sesr = np.where(np.isnan(sesr), 0, sesr)
+            # sm = np.delete(sm, mask2d == 0, axis = -1)
+            # sm = np.where(np.isnan(sm), 0, sm)
+            # fdii = np.delete(fdii, mask2d == 0, axis = -1)
+            # fdii = np.where(np.isnan(fdii), 0, fdii)
+
+            # # EOFs of each index variable
+            # print('Data prepared; performing SVD')
+            # sesr_C = np.dot(sesr.T, sesr).astype(np.float32) # space x space matrix
+            # PCs_sesr, sig_sesr, EOFs_sesr = np.linalg.svd(sesr_C)
+            # eigval_sesr = (sig_sesr**2)/T
+            # del sesr_C; gc.collect()
+
+            # sm_C = np.dot(sm.T, sm)
+            # PCs_sm, sig_sm, EOFs_sm = np.linalg.svd(sm_C)
+            # eigval_sm = (sig_sm**2)/T
+            # del sm_C; gc.collect()
+
+            # fdii_C = np.dot(fdii.T, fdii)
+            # PCs_fdii, sig_fdii, EOFs_fdii = np.linalg.svd(fdii_C)
+            # eigval_fdii = (sig_fdii**2)/T
+            # del fdii_C; gc.collect()
+
+            # # Standardize PCs
+            # print('Standardizing PCs and getting regression patterns')
+            # PCs_sesr = (PCs_sesr - np.nanmean(PCs_sesr, axis = 0))/np.nanstd(PCs_sesr, axis = 0)
+            # PCs_sm = (PCs_sm - np.nanmean(PCs_sm, axis = 0))/np.nanstd(PCs_sm, axis = 0)
+            # PCs_fdii = (PCs_fdii - np.nanmean(PCs_fdii, axis = 0))/np.nanstd(PCs_fdii, axis = 0)
+
+            # # Regress PCs onto EOFS
+            # regress_patterns_sesr, _, _ = least_squares(PCs_sesr, sesr.T)
+            # regress_patterns_sm, _, _ = least_squares(PCs_sm, sm.T)
+            # regress_patterns_fdii, _, _ = least_squares(PCs_fdii, fdii.T)
+
+            # # Make plots
+            # var_explained_sesr = eigval_sesr/np.nansum(eigval_sesr) * 100
+            # print(var_explained_sesr[:5])
+            # var_explained_sm = eigval_sm/np.nansum(eigval_sm) * 100
+            # print(var_explained_sm[:5])
+            # var_explained_fdii = eigval_fdii/np.nansum(eigval_fdii) * 100
+            # print(var_explained_fdii[:5])
+            # # plot_regress_pattern_and_PCs(regress_pattern, var_explained[0])
+
+            # # Significance plots
+            # N = eigval_sesr.size
+            # # Possible title: Eigen Value for Each Mode with Standard Error
+            # delta_lambda = eigval_sesr * np.sqrt(2/N)
+            # modes = np.arange(1, 15+1)
+            # savename = 'sesr_eigen_confidence_interval.png'
+            # make_errorbar_plot(modes, eigval_sesr[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
+
+            # delta_lambda = eigval_sm * np.sqrt(2/N)
+            # modes = np.arange(1, 15+1)
+            # savename = 'sm_eigen_confidence_interval.png'
+            # make_errorbar_plot(modes, eigval_sm[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
+
+            # delta_lambda = eigval_fdii * np.sqrt(2/N)
+            # modes = np.arange(1, 15+1)
+            # savename = 'fdii_eigen_confidence_interval.png'
+            # make_errorbar_plot(modes, eigval_fdii[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
+            # Tasks:
+            # - Try without reducing spatial grids
+            # - Add regression pattern plots
+            # - Make plots look nice
+            # - Might try MCA?
+            
         if args.skip_correlation_plots:
             for n, var_sname in enumerate(variable_snames):
                 map_data = [r['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
@@ -1100,22 +1446,22 @@ if __name__ == '__main__':
                 
                 # Make the maps
                 savename = '%s_fd_%s_correlation_map.png'%(var_sname, level)
-                make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], path = args.figure_path, savename = savename)
+                make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
                 map_data = [r_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                 sig_data = [sig_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                 
                 # Make the maps
                 savename = '%s_fd_index_%s_correlation_map.png'%(var_sname, level)
-                make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], index_corr = True, path = args.figure_path, savename = savename)
+                make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], index_corr = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
             # Make the time series plots
             savename = 'lagged_correlation_fd_%s.png'%(level)
-            make_lagged_correlation_plot(r_lag, sig_lag, lags, variable_snames, fd_types, labels, path = args.figure_path, savename = savename)
+            make_lagged_correlation_plot(r_lag, sig_lag, lags, variable_snames, fd_types, labels, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
             # Make the time series plots
             savename = 'lagged_correlation_fd_index_%s.png'%(level)
-            make_lagged_correlation_plot(r_index_lag, sig_index_lag, lags, variable_snames, fd_types, labels, path = args.figure_path, savename = savename)
+            make_lagged_correlation_plot(r_index_lag, sig_index_lag, lags, variable_snames, fd_types, labels, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         if args.skip_energy_moisture_drivers:
 
@@ -1156,11 +1502,8 @@ if __name__ == '__main__':
                           'Relative Number (%) of FDs\nwith Given Conditions',
                           x_ticks,
                           bar_err = bar_std,
-                          path = args.figure_path,
+                          path = '%s/%s/'%(args.figure_path, args.model),
                           savename = savename)
-
-        # EOFs?
-        # Ways to determine energy vs. moisture driven FD (such as % FDs with precip anomaly < -1, and/or PET anomaly > 1; Fig. 4 in Christian et al. 2021)
 
 
     if args.fd_scatterplots:
@@ -1183,6 +1526,9 @@ if __name__ == '__main__':
             frequency[i] = np.delete(frequency[i], np.isnan(frequency[i]))
             frequency_sum[i] = np.delete(frequency_sum[i], np.isnan(frequency_sum[i]))
             frequency_win[i] = np.delete(frequency_win[i], np.isnan(frequency_win[i]))
+            print(frequency[i].shape)
+            print(frequency_sum[i].shape)
+            print(frequency_win[i].shape)
 
         # In the event that removed NaNs cause length inconsistency
         ind = np.nanmin([len(frequency[0]), len(frequency[1]), len(frequency[2])]) # data[alt_ind is shorter]
@@ -1241,7 +1587,7 @@ if __name__ == '__main__':
                           ['Annual', 'MAMJJA', 'SONDJF'],
                           slope = slopes, 
                           intercept = intercepts,  
-                          path = args.figure_path, 
+                          path = '%s/%s/'%(args.figure_path, args.model), 
                           savename = savename)
         # Scatter plots of different total FD events recoreded by different methods (Fig. 4 in Nogeura 2021)
 

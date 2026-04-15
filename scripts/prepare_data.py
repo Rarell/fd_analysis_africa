@@ -100,6 +100,10 @@ if __name__ == '__main__':
             data_sub, lat_sub, lon_sub = subset_data(data, lat, lon, subset = 'africa')
             T, I, J = data_sub.shape
 
+            if model == 'gldas':
+                # Remove bad labeled data
+                data_sub = np.where(data_sub < -900, np.nan, data_sub)
+
             # Make the lat and lon 2D
             lon_sub, lat_sub = np.meshgrid(lon_sub, lat_sub)
 

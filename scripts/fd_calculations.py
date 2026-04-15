@@ -456,7 +456,8 @@ def calculate_sm_percentiles(
 
             # n = n+1
 
-    # print(np.nansum(smp <10), np.nansum(smp > 90))
+    print(np.nansum(smp <10), np.nansum(smp > 90))
+    print(np.nanmin(smp), np.nanmax(smp), np.nanmean(smp))
     smp = smp.astype(np.float32)
 
     return smp
