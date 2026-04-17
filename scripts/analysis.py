@@ -13,7 +13,7 @@ from glob import glob
 from statistics_calculations import least_squares, correlate, monte_carlo_significance
 from inputs_and_outputs import load_fd_one_year, load_index_one_year, load_raw_data, load_pickle, save_pickle
 from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots, make_errorbar_plot, make_eof_plot
-from utils import standardize_variable, calculate_spi
+from utils import subset_data, standardize_variable, calculate_spi
 
 warnings.filterwarnings('ignore')
 
@@ -173,7 +173,7 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
 
         # Add to the time set of FD and timestamp data
         # print(np.nansum(fd > 0))
-        fd_total.append(fd)
+        fd_total.append(fd.astype(np.float32))
         time.append(dates)
 
         # Load one year of data of the appropiate index
@@ -193,7 +193,7 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
 
         # Add to the total set of index data
         # print(np.nansum(fd > 0))
-        index_total.append(index_data)
+        index_total.append(index_data.astype(np.float32))
 
     fd_total = np.concatenate(fd_total, axis = 0)
     time = np.concatenate(time)
@@ -276,9 +276,9 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
 
     if ('rz' in fn_base) & (index_base is not None):
         sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
-        sm_base1 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
+        sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
         index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
-        index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model. sm_base2), recursive = True)
+        index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base2), recursive = True)
         index_files_1 = np.sort(index_files_1)
         index_files_2 = np.sort(index_files_2)
 
@@ -365,7 +365,7 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
         
     return frequency, duration, severity
 
-def load_start_times(args, fn_base, sname):
+def load_start_times(args, fn_base, sname, lat = None, lon = None, region = 'none'):
     '''
     Determine the start dates of flash drought for a given method
     '''
@@ -388,6 +388,10 @@ def load_start_times(args, fn_base, sname):
 
     fd_total = np.concatenate(fd_total, axis = 0)
     time = np.concatenate(time)
+
+    # Subset if necessary
+    if np.invert(region == 'none'):
+        fd_total, _, _ = subset_data(fd_total, lat, lon, subset = region)
     
     T, I, J = fd_total.shape
     fd_total = fd_total.reshape(T, I*J)
@@ -433,7 +437,7 @@ def trend_analysis(x, y):
     slope, intercept, yhat = least_squares(x, y)
 
     # Perform significance test (via Monte-Carlo Bootstrapping)
-    pval = monte_carlo_significance(x.copy(), y.copy(), slope.copy(), N = 500)
+    pval = monte_carlo_significance(x.copy(), y.copy(), slope.copy(), N = 5000)
 
     # Reshape if necessary
     if len(y.shape) > 1:
@@ -498,8 +502,9 @@ def eof_analysis(args, fd_idx, mask, lat, lon, times, lon_ind, var_sname):
         regress_map = regress_map.reshape(I, J)
 
         # Correct longitude issues
-        tmp = regress_map[:,lon_ind]
-        regress_map = np.concatenate([tmp, regress_map[:,:lon_ind[0]]], axis = -1)
+        if args.model == 'era5':
+            tmp = regress_map[:,lon_ind]
+            regress_map = np.concatenate([tmp, regress_map[:,:lon_ind[0]]], axis = -1)
 
         # Perform a 90 day running mean on PC to smooth out the time series
         runmean = 90
@@ -552,6 +557,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--model', type = str, default = 'era5', help = 'Type of reanalysis data examined (era5 or gldas)')
     parser.add_argument('--level', type = int, default = 0, help = 'Soil moisture level (must be 0 - 4; 0 means root zone depth)')
+    parser.add_argument('--region', type = str, default = 'none', help = 'Specific subregion to focus on (valid: sahel, congo, easter, southern, madagascar)')
     parser.add_argument('--start_year', type = int, default = 1979, help = 'First year in FD dataset')
     parser.add_argument('--end_year', type = int, default = 2024, help = 'Last year in FD dataset')
     parser.add_argument('--nprocesses', type=int, default=1, help='Number of working threads for multiprocesses tasks')
@@ -610,6 +616,12 @@ if __name__ == '__main__':
         lon_tmp = lon[:,lon_ind]
         lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
 
+    # Subset the mask if necessary
+    if np.invert(args.region == 'none'):
+            mask, _, _ = subset_data(mask, lat[:,0], lon[0,:], subset = args.region)
+
+    region = '' if args.region == 'none' else '_%s'%args.region
+
     # Make figures for FD statistics if desired
     if args.fd_stats_analysis:
         # Perform calculations for each type of FD identified
@@ -631,14 +643,16 @@ if __name__ == '__main__':
             # Perform FD statistics calculations for the full year
             freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask)
 
-            tmp = freq[:,lon_ind]
-            freq = np.concatenate([tmp, freq[:,:lon_ind[0]]], axis = 1)
+            if args.model == 'era5':
 
-            tmp = dur[:,lon_ind]
-            dur = np.concatenate([tmp, dur[:,:lon_ind[0]]], axis = 1)
+                tmp = freq[:,lon_ind]
+                freq = np.concatenate([tmp, freq[:,:lon_ind[0]]], axis = 1)
 
-            tmp = sev[:,lon_ind]
-            sev = np.concatenate([tmp, sev[:,:lon_ind[0]]], axis = 1)
+                tmp = dur[:,lon_ind]
+                dur = np.concatenate([tmp, dur[:,:lon_ind[0]]], axis = 1)
+
+                tmp = sev[:,lon_ind]
+                sev = np.concatenate([tmp, sev[:,:lon_ind[0]]], axis = 1)
 
             frequency.append(freq)
             duration.append(dur)
@@ -647,14 +661,16 @@ if __name__ == '__main__':
             # Perform FD statistics calculations for the "summer"
             freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask , times = 'summer')
 
-            tmp = freq[:,lon_ind]
-            freq = np.concatenate([tmp, freq[:,:lon_ind[0]]], axis = 1)
+            if args.model == 'era5':
 
-            tmp = dur[:,lon_ind]
-            dur = np.concatenate([tmp, dur[:,:lon_ind[0]]], axis = 1)
+                tmp = freq[:,lon_ind]
+                freq = np.concatenate([tmp, freq[:,:lon_ind[0]]], axis = 1)
 
-            tmp = sev[:,lon_ind]
-            sev = np.concatenate([tmp, sev[:,:lon_ind[0]]], axis = 1)
+                tmp = dur[:,lon_ind]
+                dur = np.concatenate([tmp, dur[:,:lon_ind[0]]], axis = 1)
+
+                tmp = sev[:,lon_ind]
+                sev = np.concatenate([tmp, sev[:,:lon_ind[0]]], axis = 1)
 
             frequency_sum.append(freq)
             duration_sum.append(dur)
@@ -663,14 +679,16 @@ if __name__ == '__main__':
             # Perform FD statistics calculations for the "winter"
             freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, times = 'winter')
 
-            tmp = freq[:,lon_ind]
-            freq = np.concatenate([tmp, freq[:,:lon_ind[0]]], axis = 1)
+            if args.model == 'era5':
 
-            tmp = dur[:,lon_ind]
-            dur = np.concatenate([tmp, dur[:,:lon_ind[0]]], axis = 1)
+                tmp = freq[:,lon_ind]
+                freq = np.concatenate([tmp, freq[:,:lon_ind[0]]], axis = 1)
 
-            tmp = sev[:,lon_ind]
-            sev = np.concatenate([tmp, sev[:,:lon_ind[0]]], axis = 1)
+                tmp = dur[:,lon_ind]
+                dur = np.concatenate([tmp, dur[:,:lon_ind[0]]], axis = 1)
+
+                tmp = sev[:,lon_ind]
+                sev = np.concatenate([tmp, sev[:,:lon_ind[0]]], axis = 1)
 
             frequency_win.append(freq)
             duration_win.append(dur)
@@ -708,6 +726,11 @@ if __name__ == '__main__':
         savename = 'severity_boxplots_%s.png'%level
         make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'severity', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
+        # Make maps of statistics
+        # characteristics = [frequency, duration, severity]
+        # savename = 'fd_characteristics_maps_%s.png'%level
+        # make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
     # Trends analysis:
         # Load in one year, do characteristic calculations, load next year, repeat to get annual average per year
         # Then do trend (plot maps and plot time series with regression line)
@@ -728,82 +751,102 @@ if __name__ == '__main__':
 
             # Perform FD statistics calculations for the full year
             frequency, duration, severity = calculate_fd_statistics_by_year(args, fn_base, sname, ind_base, ind_sname, mask, fd_type = fd_type)
-            tmp = frequency[:,:,lon_ind]
-            frequency = np.concatenate([tmp, frequency[:,:,:lon_ind[0]]], axis = 2)
+            if args.model == 'era5':
+                tmp = frequency[:,:,lon_ind]
+                frequency = np.concatenate([tmp, frequency[:,:,:lon_ind[0]]], axis = 2)
 
-            tmp = duration[:,:,lon_ind]
-            duration = np.concatenate([tmp, duration[:,:,:lon_ind[0]]], axis = 2)
+                tmp = duration[:,:,lon_ind]
+                duration = np.concatenate([tmp, duration[:,:,:lon_ind[0]]], axis = 2)
 
-            tmp = severity[:,:,lon_ind]
-            severity = np.concatenate([tmp, severity[:,:,:lon_ind[0]]], axis = 2)
+                tmp = severity[:,:,lon_ind]
+                severity = np.concatenate([tmp, severity[:,:,:lon_ind[0]]], axis = 2)
 
             # Perform FD statistics calculations for the "summer"
             frequency_sum, duration_sum, severity_sum = calculate_fd_statistics_by_year(args, fn_base, sname, ind_base, ind_sname, mask, fd_type = fd_type, times = 'summer')
-            tmp = frequency_sum[:,:,lon_ind]
-            frequency_sum = np.concatenate([tmp, frequency_sum[:,:,:lon_ind[0]]], axis = 2)
+            if args.model == 'era5':
+                tmp = frequency_sum[:,:,lon_ind]
+                frequency_sum = np.concatenate([tmp, frequency_sum[:,:,:lon_ind[0]]], axis = 2)
 
-            tmp = duration_sum[:,:,lon_ind]
-            duration_sum = np.concatenate([tmp, duration_sum[:,:,:lon_ind[0]]], axis = 2)
+                tmp = duration_sum[:,:,lon_ind]
+                duration_sum = np.concatenate([tmp, duration_sum[:,:,:lon_ind[0]]], axis = 2)
 
-            tmp = severity_sum[:,:,lon_ind]
-            severity_sum = np.concatenate([tmp, severity_sum[:,:,:lon_ind[0]]], axis = 2)
+                tmp = severity_sum[:,:,lon_ind]
+                severity_sum = np.concatenate([tmp, severity_sum[:,:,:lon_ind[0]]], axis = 2)
 
             # Perform FD statistics calculations for the "winter"
             frequency_win, duration_win, severity_win = calculate_fd_statistics_by_year(args, fn_base, sname, ind_base, ind_sname, mask, fd_type = fd_type, times = 'winter')
-            tmp = frequency_win[:,:,lon_ind]
-            frequency_win = np.concatenate([tmp, frequency_win[:,:,:lon_ind[0]]], axis = 2)
+            if args.model == 'era5':
+                tmp = frequency_win[:,:,lon_ind]
+                frequency_win = np.concatenate([tmp, frequency_win[:,:,:lon_ind[0]]], axis = 2)
 
-            tmp = duration_win[:,:,lon_ind]
-            duration_win = np.concatenate([tmp, duration_win[:,:,:lon_ind[0]]], axis = 2)
+                tmp = duration_win[:,:,lon_ind]
+                duration_win = np.concatenate([tmp, duration_win[:,:,:lon_ind[0]]], axis = 2)
 
-            tmp = severity_win[:,:,lon_ind]
-            severity_win = np.concatenate([tmp, severity_win[:,:,:lon_ind[0]]], axis = 2)
+                tmp = severity_win[:,:,lon_ind]
+                severity_win = np.concatenate([tmp, severity_win[:,:,:lon_ind[0]]], axis = 2)
 
             # Normalize the severity so the slope can be uniformly be displayed on maps and plots
             max_sev = np.nanmax(np.abs(severity))
             severity = severity/max_sev; severity_sum = severity_sum/max_sev; severity_win = severity_win/max_sev
 
-            T, I, J = frequency.shape
-            # Perform trend analysis
-            slope_freq, _, pval_freq = trend_analysis(years.copy(), frequency.copy())
-            slope_dur, _, pval_dur = trend_analysis(years.copy(), duration.copy())
-            slope_sev, _, pval_sev = trend_analysis(years.copy(), severity.copy())
+            if args.region == 'none':
+                T, I, J = frequency.shape
+                # Perform trend analysis
+                slope_freq, _, pval_freq = trend_analysis(years.copy(), frequency.copy())
+                slope_dur, _, pval_dur = trend_analysis(years.copy(), duration.copy())
+                slope_sev, _, pval_sev = trend_analysis(years.copy(), severity.copy())
 
-            T, I, J = frequency_sum.shape
-            # Repeat for "summer"
-            slope_freq_sum, _, pval_freq_sum = trend_analysis(years.copy(), frequency_sum.copy())
-            slope_dur_sum, _, pval_dur_sum = trend_analysis(years.copy(), duration_sum.copy())
-            slope_sev_sum, _, pval_sev_sum = trend_analysis(years.copy(), severity_sum.copy())
+                T, I, J = frequency_sum.shape
+                # Repeat for "summer"
+                slope_freq_sum, _, pval_freq_sum = trend_analysis(years.copy(), frequency_sum.copy())
+                slope_dur_sum, _, pval_dur_sum = trend_analysis(years.copy(), duration_sum.copy())
+                slope_sev_sum, _, pval_sev_sum = trend_analysis(years.copy(), severity_sum.copy())
 
-            T, I, J = frequency_win.shape
-            # Repeat for "winter"
-            slope_freq_win, _, pval_freq_win = trend_analysis(years.copy(), frequency_win.copy())
-            slope_dur_win, _, pval_dur_win = trend_analysis(years.copy(), duration_win.copy())
-            slope_sev_win, _, pval_sev_win = trend_analysis(years.copy(), severity_win.copy())
+                T, I, J = frequency_win.shape
+                # Repeat for "winter"
+                slope_freq_win, _, pval_freq_win = trend_analysis(years.copy(), frequency_win.copy())
+                slope_dur_win, _, pval_dur_win = trend_analysis(years.copy(), duration_win.copy())
+                slope_sev_win, _, pval_sev_win = trend_analysis(years.copy(), severity_win.copy())
 
-            # Add the trend variables to their respective lists
-            slope_freq[slope_freq == 0] = np.nan; pval_freq[np.isnan(slope_freq)] = np.nan
-            slope_sev[slope_sev == 0] = np.nan; pval_sev[np.isnan(slope_sev)] = np.nan
-            slope_dur[slope_dur == 0] = np.nan; pval_dur[np.isnan(slope_dur)] = np.nan
+                # Add the trend variables to their respective lists
+                slope_freq[slope_freq == 0] = np.nan; pval_freq[np.isnan(slope_freq)] = np.nan
+                slope_sev[slope_sev == 0] = np.nan; pval_sev[np.isnan(slope_sev)] = np.nan
+                slope_dur[slope_dur == 0] = np.nan; pval_dur[np.isnan(slope_dur)] = np.nan
 
-            slope_freq_sum[slope_freq_sum == 0] = np.nan; pval_freq_sum[np.isnan(slope_freq_sum)] = np.nan
-            slope_sev_sum[slope_sev_sum == 0] = np.nan; pval_sev_sum[np.isnan(slope_sev_sum)] = np.nan
-            slope_dur_sum[slope_dur_sum == 0] = np.nan; pval_dur_sum[np.isnan(slope_dur_sum)] = np.nan
+                slope_freq_sum[slope_freq_sum == 0] = np.nan; pval_freq_sum[np.isnan(slope_freq_sum)] = np.nan
+                slope_sev_sum[slope_sev_sum == 0] = np.nan; pval_sev_sum[np.isnan(slope_sev_sum)] = np.nan
+                slope_dur_sum[slope_dur_sum == 0] = np.nan; pval_dur_sum[np.isnan(slope_dur_sum)] = np.nan
 
-            slope_freq_win[slope_freq_win == 0] = np.nan; pval_freq_win[np.isnan(slope_freq_win)] = np.nan
-            slope_sev_win[slope_sev_win == 0] = np.nan; pval_sev_win[np.isnan(slope_sev_win)] = np.nan
-            slope_dur_win[slope_dur_win == 0] = np.nan; pval_dur_win[np.isnan(slope_dur_win)] = np.nan
+                slope_freq_win[slope_freq_win == 0] = np.nan; pval_freq_win[np.isnan(slope_freq_win)] = np.nan
+                slope_sev_win[slope_sev_win == 0] = np.nan; pval_sev_win[np.isnan(slope_sev_win)] = np.nan
+                slope_dur_win[slope_dur_win == 0] = np.nan; pval_dur_win[np.isnan(slope_dur_win)] = np.nan
 
-            slopes['frequency'].append([slope_freq, slope_freq_sum, slope_freq_win]) 
-            pvals['frequency'].append([pval_freq, pval_freq_sum,pval_freq_win])
+                slopes['frequency'].append([slope_freq, slope_freq_sum, slope_freq_win]) 
+                pvals['frequency'].append([pval_freq, pval_freq_sum,pval_freq_win])
 
-            slopes['duration'].append([slope_dur, slope_dur_sum, slope_dur_win]) 
-            pvals['duration'].append([pval_dur, pval_dur_sum,pval_dur_win])
+                slopes['duration'].append([slope_dur, slope_dur_sum, slope_dur_win]) 
+                pvals['duration'].append([pval_dur, pval_dur_sum,pval_dur_win])
 
-            slopes['severity'].append([slope_sev, slope_sev_sum, slope_sev_win]) 
-            pvals['severity'].append([pval_sev, pval_sev_sum,pval_sev_win])
+                slopes['severity'].append([slope_sev, slope_sev_sum, slope_sev_win]) 
+                pvals['severity'].append([pval_sev, pval_sev_sum,pval_sev_win])
 
             # Peform trend analysis of overall means
+            if np.invert(args.region == 'none'):
+                # Subset data to a region if necessary
+                frequency, _, _ = subset_data(frequency, lat[:,0], lon[0,:], subset = args.region)
+                duration, _, _ = subset_data(duration, lat[:,0], lon[0,:], subset = args.region)
+                severity, _, _ = subset_data(severity, lat[:,0], lon[0,:], subset = args.region)
+
+                frequency_sum, _, _ = subset_data(frequency_sum, lat[:,0], lon[0,:], subset = args.region)
+                duration_sum, _, _ = subset_data(duration_sum, lat[:,0], lon[0,:], subset = args.region)
+                severity_sum, _, _ = subset_data(severity_sum, lat[:,0], lon[0,:], subset = args.region)
+
+                frequency_win, _, _ = subset_data(frequency_win, lat[:,0], lon[0,:], subset = args.region)
+                duration_win, _, _ = subset_data(duration_win, lat[:,0], lon[0,:], subset = args.region)
+                severity_win, _, _ = subset_data(severity_win, lat[:,0], lon[0,:], subset = args.region)
+
+                T, I, J = frequency.shape
+
             # tmp_freq = np.nanmean(frequency, axis = -1)
             tmp_freq = np.nanmean(frequency.reshape(T,I*J), axis = -1)
             tmp_dur = np.nanmean(duration.reshape(T,I*J), axis = -1)
@@ -850,24 +893,23 @@ if __name__ == '__main__':
 
         for n in range(len(characteristic)):
             # Make the maps
-            map_data = slopes[characteristic[n]]
-            savename = '%s_trends_maps_%s.png'%(characteristic[n], level)
-            make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = cmins[n], cmax = cmaxes[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            if args.region == 'none':
+                map_data = slopes[characteristic[n]]
+                savename = '%s_trends_maps_%s.png'%(characteristic[n], level)
+                make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = cmins[n], cmax = cmaxes[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
-             # Plot the significance
-            map_pval = pvals[characteristic[n]]
-            savename = '%s_trends_significance_maps_%s.png'%(characteristic[n], level)
-            make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                # Plot the significance
+                map_pval = pvals[characteristic[n]]
+                savename = '%s_trends_significance_maps_%s.png'%(characteristic[n], level)
+                make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
             # Make the time series plots
-            savename = '%s_timeseries_trends_%s.png'%(characteristic[n], level)
+            savename = '%s_timeseries_trends_%s%s.png'%(characteristic[n], level, region)
             overall_ts_plot = [overall_ts[0+n], overall_ts[3+n], overall_ts[6+n]]
             overall_slopes_plot = [overall_slopes[0+n], overall_slopes[3+n], overall_slopes[6+n]]
             overall_intercepts_plot = [overall_intercepts[0+n], overall_intercepts[3+n], overall_intercepts[6+n]]
             overall_slopes_pval_plot = [overall_slopes_pval[0+n], overall_slopes_pval[3+n], overall_slopes_pval[6+n]]
             timeseries_plot(years, overall_ts_plot, overall_slopes_plot, overall_intercepts_plot, overall_slopes_pval_plot, fd_types, characteristic[n], ['Annual', 'MAMJJA', 'SONDJF'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
-
-        # Repeat for different regions
         
 
     # Sensitivity analysis:
@@ -875,8 +917,8 @@ if __name__ == '__main__':
         # Correlate with FD occurence and other types of analyses (Nogeura et al. 2021, Mukherjee et al. 2022a)
         # Repeat for specific regions (may also connect type of climate anomalies to explain trends)
     if args.fd_sensitivity_analysis:
-        variable_snames = ['tair', 'd2m', 'sp', 'ws', 'e', 'pev', 'tp', 'vpd', 'swvl1', 'swvl2', 'swvlrz']
-        labels = ['T', r'T$_d$', 'Pres', 'WS', 'E', 'PE', 'Prec', 'VPD', 'SM1', 'SM2', 'RZSM']
+        variable_snames = ['tair', 'd2m', 'sp', 'ws', 'e', 'pev', 'tp', 'vpd', 'swvl1', 'swvl2', 'swvlrz', 'enso', 'iod']
+        labels = ['T', r'T$_d$', 'Pres', 'WS', 'E', 'PE', 'Prec', 'VPD', 'SM1', 'SM2', 'RZSM', 'ENSO', 'IOD/\nDMI']
 
         # Construct array of datetimes
         start = datetime(1979, 1, 1); end = datetime(2024, 12, 31)
@@ -905,7 +947,7 @@ if __name__ == '__main__':
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
             if args.skip_variable_boxplots:
                 # Collect datetimes of FD start; note the shape is lat x lon
-                start_dates, start_dates_ind = load_start_times(args, fn_base, sname)
+                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = lat[:,0], lon = lon[0,:], region = args.region)
 
                 variables = {}
                 variables_5day = {}
@@ -914,6 +956,9 @@ if __name__ == '__main__':
                 for var_sname in variable_snames:
                     # Load the variable
                     variable = load_raw_data(var_sname, args.model)
+
+                    if np.invert(args.region == 'none'):
+                        variable, _, _ = subset_data(variable, lat[:,0], lon[0,:], subset = args.region)
 
                     if (var_sname == 'pev') & (args.model == 'era5'):
                         variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
@@ -985,7 +1030,7 @@ if __name__ == '__main__':
                 # print(box_data[0])
 
                 # Make the box plot
-                savename = 'variable_anomaly_boxplot_for_fd_%s_%s.png'%(fd_type, level)
+                savename = 'variable_anomaly_boxplot_for_fd_%s_%s%s.png'%(fd_type, level, region)
                 make_variable_boxplots(box_data, labels, 
                                     ['15 Days before FD', '10 Days before FD', '5 Days before FD', 'Start of FD'],
                                     fd_type, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
@@ -994,6 +1039,11 @@ if __name__ == '__main__':
                 print(fd_type)
                 # Load FD and index data for all years
                 fd, fd_index = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, return_fd_and_indices = True)
+
+                # Subset if necessary
+                if np.invert(args.region == 'none'):
+                    fd, _, _ = subset_data(fd, lat[:,0], lon[0,:], subset = args.region)
+                    fd_index, _, _ = subset_data(fd_index, lat[:,0], lon[0,:], subset = args.region)
 
                 # Reshape to time x space for easier calculations
                 T, I, J = fd.shape
@@ -1010,6 +1060,10 @@ if __name__ == '__main__':
                     # Load the variable data
                     variable = load_raw_data(var_sname, args.model)
 
+                    # Subset if necessary
+                    if np.invert(args.region == 'none'):
+                        variable, _, _ = subset_data(variable, lat[:,0], lon[0,:], subset = args.region)
+
                     if (var_sname == 'pev') & (args.model == 'era5'):
                         variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
 
@@ -1017,50 +1071,53 @@ if __name__ == '__main__':
                     variable = variable.reshape(T, I*J).astype(np.float32)
 
                     # Perform the correlation
-                    # stat, _ = stats.pearsonr(fd, variable, axis = 0)
-                    # pval = monte_carlo_significance(fd, variable, stat, N = 5000, statistic = 'correlation')
-                    # stat = stat.reshape(I, J)
-                    # pval = pval.reshape(I, J)
-                    results = stats.pearsonr(fd, variable, method = test_method, axis = 0)
-                    stat = results.statistic.reshape(I, J)
-                    pval = results.pvalue.reshape(I, J)
+                    if args.region == 'none':
+                        # stat, _ = stats.pearsonr(fd, variable, axis = 0)
+                        # pval = monte_carlo_significance(fd, variable, stat, N = 5000, statistic = 'correlation')
+                        # stat = stat.reshape(I, J)
+                        # pval = pval.reshape(I, J)
+                        results = stats.pearsonr(fd, variable, method = test_method, axis = 0)
+                        stat = results.statistic.reshape(I, J)
+                        pval = results.pvalue.reshape(I, J)
 
-                    # Fix longitude displacement
-                    tmp = stat[:,lon_ind]
-                    stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
-                    tmp = pval[:,lon_ind]
-                    pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
+                        # Fix longitude displacement
+                        if args.model == 'era5':
+                            tmp = stat[:,lon_ind]
+                            stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
+                            tmp = pval[:,lon_ind]
+                            pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
-                    r['%s_%s'%(fd_type, var_sname)] = stat
-                    sig['%s_%s'%(fd_type, var_sname)] = pval
+                        r['%s_%s'%(fd_type, var_sname)] = stat
+                        sig['%s_%s'%(fd_type, var_sname)] = pval
 
-                    print(r['%s_%s'%(fd_type, var_sname)].shape, sig['%s_%s'%(fd_type, var_sname)].shape)
+                        print(r['%s_%s'%(fd_type, var_sname)].shape, sig['%s_%s'%(fd_type, var_sname)].shape)
 
 
-                    # stat, _ = stats.pearsonr(fd_index, variable, axis = 0)
-                    # pval = monte_carlo_significance(fd_index, variable, stat, N = 5000, statistic = 'correlation')
-                    # stat = stat.reshape(I, J)
-                    # pval = pval.reshape(I, J)
-                    results = stats.pearsonr(fd_index, variable, method = test_method, axis = 0)
+                        # stat, _ = stats.pearsonr(fd_index, variable, axis = 0)
+                        # pval = monte_carlo_significance(fd_index, variable, stat, N = 5000, statistic = 'correlation')
+                        # stat = stat.reshape(I, J)
+                        # pval = pval.reshape(I, J)
+                        results = stats.pearsonr(fd_index, variable, method = test_method, axis = 0)
 
-                    # Fix longitude displacement
-                    stat = results.statistic.reshape(I, J)
-                    pval = results.pvalue.reshape(I, J)
+                        # Fix longitude displacement
+                        stat = results.statistic.reshape(I, J)
+                        pval = results.pvalue.reshape(I, J)
 
-                    # Fix longitude displacement
-                    tmp = stat[:,lon_ind]
-                    stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
-                    tmp = pval[:,lon_ind]
-                    pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
+                        # Fix longitude displacement
+                        if args.model == 'era5':
+                            tmp = stat[:,lon_ind]
+                            stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
+                            tmp = pval[:,lon_ind]
+                            pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
-                    r_index['%s_%s'%(fd_type, var_sname)] = stat
-                    sig_index['%s_%s'%(fd_type, var_sname)] = pval
-                    # r['%s_%s'%(fd_type, var_sname)] = correlate(fd, variable)
-                    # r_index['%s_%s'%(fd_type, var_sname)] = correlate(fd_index, variable)
+                        r_index['%s_%s'%(fd_type, var_sname)] = stat
+                        sig_index['%s_%s'%(fd_type, var_sname)] = pval
+                        # r['%s_%s'%(fd_type, var_sname)] = correlate(fd, variable)
+                        # r_index['%s_%s'%(fd_type, var_sname)] = correlate(fd_index, variable)
 
-                    # Conduct significance testing
-                    # sig['%s_%s'%(fd_type, var_sname)] = monte_carlo_significance(fd, variable, r['%s_%s'%(fd_type, var_sname)], N = 100, statistic = 'correlation')
-                    # sig_index['%s_%s'%(fd_type, var_sname)] = monte_carlo_significance(fd_index, variable, r_index['%s_%s'%(fd_type, var_sname)], N = 100, statistic = 'correlation')
+                        # Conduct significance testing
+                        # sig['%s_%s'%(fd_type, var_sname)] = monte_carlo_significance(fd, variable, r['%s_%s'%(fd_type, var_sname)], N = 100, statistic = 'correlation')
+                        # sig_index['%s_%s'%(fd_type, var_sname)] = monte_carlo_significance(fd_index, variable, r_index['%s_%s'%(fd_type, var_sname)], N = 100, statistic = 'correlation')
 
                     # Spatially average the variable for lag correlation
                     variable = np.nanmean(variable, axis = -1)
@@ -1135,7 +1192,7 @@ if __name__ == '__main__':
 
             if args.skip_energy_moisture_drivers:
                 # Collect datetimes of FD start; note the shape is lat x lon
-                start_dates, start_dates_ind = load_start_times(args, fn_base, sname)
+                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = lat[:,0], lon = lon[0,:], region = args.region)
                 fd_starts[fd_type] = start_dates_ind
 
             if args.skip_eof_analysis:
@@ -1238,25 +1295,25 @@ if __name__ == '__main__':
         if args.skip_energy_moisture_drivers:
             # Load precipitation
             precip = load_raw_data('tp', args.model)
+
+            # Subset if necessary
+            if np.invert(args.region == 'none'):
+                precip, _, _ = subset_data(precip, lat[:,0], lon[0,:], subset = args.region)
+
             T, I, J = precip.shape
-
-            lat_ind = np.where((lat[:,0] >= 5) & (lat[:,0] <= 10))[0]
-            lon_ind = np.where((lon[0,:] >= 5) & (lon[0,:] <= 40))[0]
-            print(lon_ind, lat_ind)
-
-            # tmp = precip[:,lat_ind,:]
-            # precip = tmp[:,:,lon_ind]
 
             # Calculate the SPI
             spi = calculate_spi(precip, dates_all)
 
             # Load the PET
             pet = load_raw_data('pev', args.model)
+
+            # Subset if necessary
+            if np.invert(args.region == 'none'):
+                pet, _, _ = subset_data(pet, lat[:,0], lon[0,:], subset = args.region)
+
             if args.model == 'era5':
                 pet = -1*pet# Convert so positive PET represents energy fluxed into the atmosphere
-
-            # tmp = pet[:,lat_ind,:]
-            # pet = tmp[:,:,lon_ind]
 
             # Determine the standardized anomaly of PET
             pet = standardize_variable(pet, 
@@ -1440,27 +1497,28 @@ if __name__ == '__main__':
             # - Might try MCA?
             
         if args.skip_correlation_plots:
-            for n, var_sname in enumerate(variable_snames):
-                map_data = [r['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
-                sig_data = [sig['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
-                
-                # Make the maps
-                savename = '%s_fd_%s_correlation_map.png'%(var_sname, level)
-                make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            if args.region == 'none':
+                for n, var_sname in enumerate(variable_snames):
+                    map_data = [r['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+                    sig_data = [sig['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+                    
+                    # Make the maps
+                    savename = '%s_fd_%s_correlation_map.png'%(var_sname, level)
+                    make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
-                map_data = [r_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
-                sig_data = [sig_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
-                
-                # Make the maps
-                savename = '%s_fd_index_%s_correlation_map.png'%(var_sname, level)
-                make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], index_corr = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                    map_data = [r_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+                    sig_data = [sig_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+                    
+                    # Make the maps
+                    savename = '%s_fd_index_%s_correlation_map.png'%(var_sname, level)
+                    make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], index_corr = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
             # Make the time series plots
-            savename = 'lagged_correlation_fd_%s.png'%(level)
+            savename = 'lagged_correlation_fd_%s%s.png'%(level, region)
             make_lagged_correlation_plot(r_lag, sig_lag, lags, variable_snames, fd_types, labels, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
             # Make the time series plots
-            savename = 'lagged_correlation_fd_index_%s.png'%(level)
+            savename = 'lagged_correlation_fd_index_%s%s.png'%(level, region)
             make_lagged_correlation_plot(r_index_lag, sig_index_lag, lags, variable_snames, fd_types, labels, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
         if args.skip_energy_moisture_drivers:
@@ -1496,7 +1554,7 @@ if __name__ == '__main__':
             # Tick labels
             x_ticks = ['SPI<-1', 'PET>1', 'SPI<-1 &\nPET<1', 'SPI>-1 &\nPET>1', 'SPI<-1 &\nPET>1']
 
-            savename = 'moisture_energy_driver_for_layer_%s_fd.png'%level
+            savename = 'moisture_energy_driver_for_layer_%s_fd%s.png'%(level, region)
             make_barplots(bar_data, 
                           fd_types, 
                           'Relative Number (%) of FDs\nwith Given Conditions',
@@ -1593,5 +1651,43 @@ if __name__ == '__main__':
 
     # Make map highlighting specific regions
     if args.make_region_map:
+        from pyhdf.SD import SD, SDC
+
+        # Collect the land cover type data
+        file = SD('../../modis/raw/MCD12C1.A2022001.061.2023244164746.hdf', SDC.READ)
+        print(file.datasets())
+
+        # Collect the data
+        data_holder = file.select('Majority_Land_Cover_Type_1')
+        print(data_holder.attributes())
+        print(data_holder.info())
+
+        # Land cover types
+        # lct = data_holder.attributes().keys()
+        lct = np.array([key for key in data_holder.attributes().keys()])
+        print(lct[4:])
+
+        data = data_holder.get()
+        data = np.array(data)
+
+        # Obtain the latitude and longitudes
+        resolution = 0.05
+        lat = np.arange(-90, 90, resolution)
+        lat = lat[::-1]
+        lon = np.arange(-180, 180, resolution)
+
+        lat_ind = np.where((lat >= -42) & (lat <= 42))[0]
+        lon_ind = np.where((lon >= -30) & (lon <= 55))[0]
+
+        lat = lat[lat_ind]; lon = lon[lon_ind]
+        data = data[lat_ind,:]
+        data = data[:,lon_ind]
+        lon, lat = np.meshgrid(lon, lat)
+
+        # print(Dataset('../../modis/raw/MCD12C1.A2022001.061.2023244164746.hdf', 'r'))
         savename = 'africa_regional_map.png'
-        create_regional_boxes(savename = savename, path = args.figure_path)
+        create_regional_boxes(data, lat, lon, lct[4:], savename = savename, path = args.figure_path)
+
+        # Close the file
+        data_holder.endaccess()
+        file.end()

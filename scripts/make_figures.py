@@ -515,7 +515,7 @@ def make_variable_boxplots(data, var_labels, labels, fd_type, path = './', saven
             data[n][m] = np.delete(data[n][m], np.isnan(data[n][m]))
 
     # Initialize the figure
-    fig, ax = plt.subplots(figsize = [14, 8], nrows = 1, ncols = 1)
+    fig, ax = plt.subplots(figsize = [18, 8], nrows = 1, ncols = 1)
 
     # Set the title
     ax.set_title(fd_type.upper(), fontsize = 22)
@@ -534,7 +534,7 @@ def make_variable_boxplots(data, var_labels, labels, fd_type, path = './', saven
         bplots = ax.boxplot(data[n], 
                             notch = True, 
                             whis = (5, 95),
-                            positions = [n+1+5*m for m in range(len(data[n]))],
+                            positions = [n+1.5+5*m for m in range(len(data[n]))],
                             sym = '', 
                             vert = True, 
                             bootstrap = 1000, 
@@ -875,29 +875,58 @@ def make_eof_plot(regression_patterns, lat, lon, pcs, times, variable, mode, var
     plt.close()
 
 
-def create_regional_boxes(savename = 'tmp.png', path = './'):
+def create_regional_boxes(lc, lat, lon, legend_labels, savename = 'tmp.png', path = './'):
     '''
     Create a map displaying how an area is split into different regions
     '''
 
     # Set the borders
     borders = [ # Order is [min_lat, max_lat, min_lon, max_lon] 
-        [4, 15, 340, 12], # (min and max lon refer to western 
-        [-10, 4, 8, 35],  # and eastern lon respectively)
-        [4, 15, 12, 35],
-        [-10, 15, 35, 52],
+        [4, 15, 340, 28], # (min and max lon refer to western 
+        [-10, 4, 8, 28],  # and eastern lon respectively)
+        [-10, 15, 28, 52],
         [-35, -10, 9, 41],
         [-26, -11, 43, 51],
     ]
 
     labels = [
-        'Sahel',
-        'Tropical Africa',
-        'Central Africa',
-        'Eastern Africa',
-        'Southern Africa',
-        'Madagascar',
+        'SL', # Sahel
+        'CB', # Congo Basin
+        'EA', # Eastern Africa
+        'SA', # Southern Africa
+        'MD', # Madagascar
     ]
+
+    colors = [
+        '#05457b', # Water
+        '#05450c', # Evergreen Needleleaf
+        '#023b01', # Evergreen Broadleaf
+        '#01bb02', # Deciduous Needleleaf
+        '#01ff01', # Deciduous Broadleaf
+        '#013b01', # Mixed Forest
+        '#d0e6b5', # Closed Shrubland
+        '#00d600', # Open Shrublands
+        '#00ff00', # Woody Savannas
+        '#ffff00', # Savannas
+        '#943c00', # Grasslands
+        '#001149', # Permanent Wetlands
+        '#ff0000', # Croplands
+        '#ffb400', # Urban and Built Up
+        '#00ffaf', # Cropland and Natural Vegetation Mosaic
+        '#00ffff', # Snow and Ice
+        '#f7e084', # Baren/Sparsely Vegetated
+    ]
+
+    # Determine which classes to exclude
+    classes = np.arange(0, 16+1)
+    exclude_classes = np.array([np.nansum(lc == land_class) <= 100 for land_class in classes])
+    exclude_indices = np.where(exclude_classes == True)[0]
+
+    # Colorbar information
+    cmin = 0; cmax = 16
+    clevs = np.arange(cmin, cmax + 1)
+    nlevs = len(clevs)
+    cmap = mcolors.ListedColormap(colors)
 
     # Lonitude and latitude tick information
     lat_int = 10
@@ -917,11 +946,13 @@ def create_regional_boxes(savename = 'tmp.png', path = './'):
     ax = fig.add_subplot(1,1,1, projection = proj)
 
     # Add ocean features
-    ax.add_feature(cfeature.OCEAN, facecolor = 'white', edgecolor = 'white', zorder = 2)
+    # ax.add_feature(cfeature.OCEAN, facecolor = 'white', edgecolor = 'white', zorder = 2)
 
     # Add coastlines and country borders
     ax.coastlines(edgecolor = 'black', zorder = 3)
     ax.add_feature(cfeature.BORDERS, facecolor = 'none', edgecolor = 'black', zorder = 3)
+
+    cs = ax.pcolormesh(lon, lat, lc, vmin = cmin, vmax = cmax, cmap = cmap, transform = proj, zorder = 1)
 
     ax.set_yticklabels(LatLabel, fontsize = 26)
     ax.yaxis.set_major_formatter(LatFormatter)
@@ -954,7 +985,7 @@ def create_regional_boxes(savename = 'tmp.png', path = './'):
                                         height = height, 
                                         facecolor = 'none', 
                                         edgecolor = 'k', 
-                                        linewidth = 3, 
+                                        linewidth = 4, 
                                         transform = proj, 
                                         zorder = 4))
         
@@ -966,11 +997,22 @@ def create_regional_boxes(savename = 'tmp.png', path = './'):
         ax.text(min_lon+1,#central_lon,         # Longitude (x) coordinate
                 border[0]+1,#np.mean(border[:2]), # Latitude (y) coordinate
                 label,
-                color = 'r',
+                color = 'k',
+                bbox = dict(facecolor = 'white', edgecolor = None),
                 fontsize = 26)
 
     # Set the map extent
     ax.set_extent([lower_lon, upper_lon, lower_lat, upper_lat])
+
+    # Make the patches for labels
+    boxes = [mpatches.Rectangle((0,0), 2, 1, facecolor = color, edgecolor = 'k', label = label.title()) for color, label in zip(colors, legend_labels)]
+
+    # Remove classes with few pixels
+    for ind in reversed(exclude_indices):
+        boxes.pop(ind)
+
+    # Add boxes indicating significance colors
+    fig.legend(handles = boxes, bbox_to_anchor = (1.28, 0.89), frameon = False, ncols = 1, fontsize = 26)
 
     # Save the figure
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')

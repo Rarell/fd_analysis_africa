@@ -47,7 +47,10 @@ raw_data_base_names = {
         'swvl1': 'africa_gldas.soil_moisture_0-10cm.daily_', 
         'swvl2': 'africa_gldas.soil_moisture_10-40cm.daily_', 
         'swvlrz': ['africa_gldas.soil_moisture_0-10cm.daily_', 'africa_gldas.soil_moisture_10-40cm.daily_']
-    }
+    },
+    'enso': 'enso.timeseries',
+    'iod': 'dmi.had.long',
+    'mjo': ''
 }
 
 gldas_snames = {
@@ -63,6 +66,8 @@ gldas_snames = {
     'swvl2': 'soilm', 
     'swvlrz': 'swvlrz'
 }
+
+climate_indices = ['enso', 'iod', 'mjo']
 
 def load_fd_one_year(
         file, 
@@ -179,6 +184,13 @@ def load_raw_data(sname, model):
     '''
     Load a set of raw data for a given variable
     '''
+
+    # Climate indices are located elsewhere, and requires different processing
+    if sname in climate_indices:
+        # Load the climate index, and it is already in a np.ndarray, full timeseries
+        data = load_climate_index(sname, model)
+        return data
+
     # Collect the path to the variable
     path = raw_data_paths[sname]
     if isinstance(path, list) & (sname != 'vpd') & (sname != 'ws'):
@@ -264,6 +276,74 @@ def load_raw_data(sname, model):
     data = np.concatenate(data, axis = 0)
 
     return data
+
+def load_climate_index(sname, model = 'era5'):
+    '''
+    Load a climate index
+    '''
+    # Load the mask as a test grid
+    with Dataset('%s/%s/aridity_mask.nc'%('/ourdisk/hpc/ai2es/sedris/fd_analysis/data', model), 'r') as nc:
+        mask = nc.variables['aim'][0,:,:]
+
+    # Hard fix the path to the climate indices
+    index_path = '/ourdisk/hpc/ai2es/sedris/climate_indices' 
+
+    # Determine if ENSO is being loaded (its csv has multiple indices to load for SSTs, SSTAs, and for each ENSO region)
+    usecols = (1, 2, 3, 4, 5, 6, 7, 8) if sname.lower() == 'enso' else 1
+
+    # Determine the filename
+    filename = raw_data_base_names[sname]
+
+    # Note IOD data is raw, its time stamps needs to be prepared
+    timestamps_prepared = False if sname.lower() == 'iod' else True
+
+    # Load the data
+    data = np.loadtxt('%s/%s.csv'%(index_path, filename), delimiter = ',', skiprows = 1, usecols = usecols)
+
+    # Turn the timestamps into datetimes arrays
+    timestamps = np.loadtxt('%s/%s.csv'%(index_path, filename), delimiter = ',', dtype = str, skiprows = 1, usecols = 0)
+    if timestamps_prepared:
+        dates = np.array([datetime.fromisoformat(date) for date in timestamps])
+    else:
+        dates = np.array([datetime.strptime(date, '%Y-%m-%d') for date in timestamps])
+
+    # If ENSO is the index, get the 3.4 region SSTAs
+    if sname.lower() == 'enso':
+        data = data[:,5]
+
+    # Select data for the desired year range
+    # years = np.array([date.year for date in data['time']])
+    # ind = np.where((years >= 1979) & (years <= 2024))[0]
+    # data = data[ind]; dates = dates[ind]
+
+    # Construct a set of daily timestamps
+    start = datetime(1979, 1, 1); end = datetime(2024, 12, 31)
+    Ndays = (end - start).days
+    dates_new = np.array([start + timedelta(days = day) for day in range(Ndays+1)])
+
+    # Interpolate to a daily time series to match the other datasets
+    T = dates_new.size
+    index_new_dates = np.ones((T,)) * np.nan
+    for t, date in enumerate(dates_new):
+         # Find the most recent time stamp from grid_old
+        ind = np.where(date >= dates)[0]
+
+        # If no most recent dates were found (ENSO data starts in 1981), skip
+        if len(ind) < 1:
+            continue
+        else:
+            ind = ind[-1]
+            # Use the most recent time stamp for the current, finer time resolution
+            index_new_dates[t] = data[ind]
+
+    # Interpolate to a gridded data to match the other datasets
+    I, J = mask.shape
+    index_data = np.ones((T, I, J))
+    for i in range(I):
+        for j in range(J):
+            index_data[:,i,j] = index_new_dates
+
+    return index_data
 
 def save_pickle(file, data, snames) -> None:
     '''

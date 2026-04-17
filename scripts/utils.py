@@ -14,7 +14,12 @@ subsets = { # Formatted as lower_lat, upper_lat, lower_lon, upper_lon
     'africa_nh': [23.5, 35, 335, 53],
     'africa_sh': [-35, -23.5, 335, 53],
     'africa_tropics': [-23.5, 23.5, 335, 53],
-    'conus': [24, 55, 230, 300]
+    'conus': [24, 55, 230, 300],
+    'sahel': [4, 15, 340, 28], # (min and max lon refer to western 
+    'congo': [-10, 4, 8, 28],  # and eastern lon respectively)
+    'eastern': [-10, 15, 28, 52],
+    'southern': [-35, -10, 9, 41],
+    'madagascar': [-26, -11, 43, 51],
 }
 
 # List of different variable times (e.g., upper air variables, whether they have understcores in the name or whether to skip them)
