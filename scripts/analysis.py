@@ -555,6 +555,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip_energy_moisture_drivers', action = 'store_false', help = 'Skip the moisture/energy limited analysis')
     parser.add_argument('--skip_eof_analysis', action = 'store_false', help = 'Skip the EOF analysis for driving variables')
 
+    parser.add_argument('--em_lag_days', type = int, default = 0, help = 'Number of days before FD to examine SPI and PET for energy and moisture (EM) drivers')
     parser.add_argument('--model', type = str, default = 'era5', help = 'Type of reanalysis data examined (era5 or gldas)')
     parser.add_argument('--level', type = int, default = 0, help = 'Soil moisture level (must be 0 - 4; 0 means root zone depth)')
     parser.add_argument('--region', type = str, default = 'none', help = 'Specific subregion to focus on (valid: sahel, congo, easter, southern, madagascar)')
@@ -726,10 +727,20 @@ if __name__ == '__main__':
         savename = 'severity_boxplots_%s.png'%level
         make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'severity', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
-        # Make maps of statistics
-        # characteristics = [frequency, duration, severity]
-        # savename = 'fd_characteristics_maps_%s.png'%level
-        # make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        # Special maps of characteristics, rather than making columns time
+        characteristics = [frequency, duration, severity]
+        savename = 'fd_characteristics_maps_%s.png'%level
+        make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+        # "Summer" maps
+        characteristics = [frequency_sum, duration_sum, severity_sum]
+        savename = 'fd_characteristics_maps_%s_sum.png'%level
+        make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+        # "Winter" maps 
+        characteristics = [frequency_win, duration_win, severity_win]
+        savename = 'fd_characteristics_maps_%s_win.png'%level
+        make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
 
     # Trends analysis:
         # Load in one year, do characteristic calculations, load next year, repeat to get annual average per year
@@ -910,15 +921,44 @@ if __name__ == '__main__':
             overall_intercepts_plot = [overall_intercepts[0+n], overall_intercepts[3+n], overall_intercepts[6+n]]
             overall_slopes_pval_plot = [overall_slopes_pval[0+n], overall_slopes_pval[3+n], overall_slopes_pval[6+n]]
             timeseries_plot(years, overall_ts_plot, overall_slopes_plot, overall_intercepts_plot, overall_slopes_pval_plot, fd_types, characteristic[n], ['Annual', 'MAMJJA', 'SONDJF'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+        # Special maps that have all characteristics instead of by time
+        if args.region == 'none':
+            map_data = [[slopes['frequency'][n][0], slopes['duration'][n][0], slopes['severity'][n][0]] for n in range(len(characteristic))]
+            savename = 'characteristic_trends_maps_%s.png'%level
+            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], cmin = cmins, cmax = cmaxes, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+            map_pval = [[pvals['frequency'][n][0], pvals['duration'][n][0], pvals['severity'][n][0]] for n in range(len(characteristic))]
+            savename = 'characteristic_trends_significance_maps_%s.png'%level
+            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+            # "Summer" maps
+            map_data = [[slopes['frequency'][n][1], slopes['duration'][n][1], slopes['severity'][n][1]] for n in range(len(characteristic))]
+            savename = 'characteristic_trends_maps_%s_sum.png'%level
+            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], cmin = cmins, cmax = cmaxes, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+            map_pval = [[pvals['frequency'][n][1], pvals['duration'][n][1], pvals['severity'][n][1]] for n in range(len(characteristic))]
+            savename = 'characteristic_trends_significance_maps_%s_sum.png'%level
+            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+            # "Winter" map
+            map_data = [[slopes['frequency'][n][2], slopes['duration'][n][2], slopes['severity'][n][2]] for n in range(len(characteristic))]
+            savename = 'characteristic_trends_maps_%s_win.png'%level
+            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], cmin = cmins, cmax = cmaxes, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+
+            map_pval = [[pvals['frequency'][n][2], pvals['duration'][n][2], pvals['severity'][n][2]] for n in range(len(characteristic))]
+            savename = 'characteristic_trends_significance_maps_%s_win.png'%level
+            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
         
 
     # Sensitivity analysis:
-        # Determine standardized anomalies for multiple variables (SM, T, Tdew, PRES, WS, ET, PET, PRECIP, VPD when FD occurs, 1, 2, and 3 pentads ahead)
-        # Correlate with FD occurence and other types of analyses (Nogeura et al. 2021, Mukherjee et al. 2022a)
-        # Repeat for specific regions (may also connect type of climate anomalies to explain trends)
     if args.fd_sensitivity_analysis:
-        variable_snames = ['tair', 'd2m', 'sp', 'ws', 'e', 'pev', 'tp', 'vpd', 'swvl1', 'swvl2', 'swvlrz', 'enso', 'iod']
-        labels = ['T', r'T$_d$', 'Pres', 'WS', 'E', 'PE', 'Prec', 'VPD', 'SM1', 'SM2', 'RZSM', 'ENSO', 'IOD/\nDMI']
+        if args.model == 'era5':
+            variable_snames = ['tair', 'd2m', 'sp', 'ws', 'e', 'pev', 'tp', 'vpd', 'swvl1', 'swvl2', 'swvlrz', 'enso', 'iod']
+            labels = ['T', r'T$_d$', 'Pres', 'WS', 'E', 'PE', 'Prec', 'VPD', 'SM1', 'SM2', 'RZSM', 'ENSO', 'IOD/\nDMI']
+        else:
+            variable_snames = ['tair', 'sp', 'ws', 'e', 'pev', 'tp', 'swvl1', 'swvl2', 'swvlrz', 'enso', 'iod']
+            labels = ['T', 'Pres', 'WS', 'E', 'PE', 'Prec', 'SM1', 'SM2', 'RZSM', 'ENSO', 'IOD/\nDMI']
 
         # Construct array of datetimes
         start = datetime(1979, 1, 1); end = datetime(2024, 12, 31)
@@ -1072,10 +1112,7 @@ if __name__ == '__main__':
 
                     # Perform the correlation
                     if args.region == 'none':
-                        # stat, _ = stats.pearsonr(fd, variable, axis = 0)
-                        # pval = monte_carlo_significance(fd, variable, stat, N = 5000, statistic = 'correlation')
-                        # stat = stat.reshape(I, J)
-                        # pval = pval.reshape(I, J)
+                        # Correlation analysis
                         results = stats.pearsonr(fd, variable, method = test_method, axis = 0)
                         stat = results.statistic.reshape(I, J)
                         pval = results.pvalue.reshape(I, J)
@@ -1087,16 +1124,13 @@ if __name__ == '__main__':
                             tmp = pval[:,lon_ind]
                             pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
+                        # Obtain the correlation and significance
                         r['%s_%s'%(fd_type, var_sname)] = stat
                         sig['%s_%s'%(fd_type, var_sname)] = pval
 
                         print(r['%s_%s'%(fd_type, var_sname)].shape, sig['%s_%s'%(fd_type, var_sname)].shape)
 
-
-                        # stat, _ = stats.pearsonr(fd_index, variable, axis = 0)
-                        # pval = monte_carlo_significance(fd_index, variable, stat, N = 5000, statistic = 'correlation')
-                        # stat = stat.reshape(I, J)
-                        # pval = pval.reshape(I, J)
+                        # Repeat for the index
                         results = stats.pearsonr(fd_index, variable, method = test_method, axis = 0)
 
                         # Fix longitude displacement
@@ -1112,12 +1146,6 @@ if __name__ == '__main__':
 
                         r_index['%s_%s'%(fd_type, var_sname)] = stat
                         sig_index['%s_%s'%(fd_type, var_sname)] = pval
-                        # r['%s_%s'%(fd_type, var_sname)] = correlate(fd, variable)
-                        # r_index['%s_%s'%(fd_type, var_sname)] = correlate(fd_index, variable)
-
-                        # Conduct significance testing
-                        # sig['%s_%s'%(fd_type, var_sname)] = monte_carlo_significance(fd, variable, r['%s_%s'%(fd_type, var_sname)], N = 100, statistic = 'correlation')
-                        # sig_index['%s_%s'%(fd_type, var_sname)] = monte_carlo_significance(fd_index, variable, r_index['%s_%s'%(fd_type, var_sname)], N = 100, statistic = 'correlation')
 
                     # Spatially average the variable for lag correlation
                     variable = np.nanmean(variable, axis = -1)
@@ -1131,51 +1159,20 @@ if __name__ == '__main__':
                     for n in tqdm(lags, desc = 'Determining Lag Correlations'):
                         N = np.abs(n)
                         if n < 0:
-                            # lagged_corr, _ = stats.pearsonr(fd_space[N:], variable[:-N])
-                            # lagged_index_corr, _ = stats.pearsonr(fd_index_space[N:], variable[:-N])
-                            # lagged_sig = monte_carlo_significance(fd_space[N:], variable[:-N], lagged_corr, N = 5000, statistic = 'correlation')
-                            # lagged_index_sig = monte_carlo_significance(fd_index_space[N:], variable[:-N], lagged_index_corr, N = 5000, statistic = 'correlation')
+                            # Correlation analysis for negative lagged response
                             results = stats.pearsonr(fd_space[N:], variable[:-N], method = test_method)
                             results_index = stats.pearsonr(fd_index_space[N:], variable[:-N], method = test_method)
-                            # lagged_corr = correlate(fd_space[N:].copy(), variable[:-N].copy())
-                            # # Statistical significance test
-                            # lagged_sig = monte_carlo_significance(fd_space[N:].copy(), variable[:-N].copy(), lagged_corr, N = 100, statistic = 'correlation')
 
-                            # # Repeat with the index
-                            # lagged_index_corr = correlate(fd_index_space[N:].copy(), variable[:-N].copy())
-                            # # Statistical significance test
-                            # lagged_index_sig = monte_carlo_significance(fd_index_space[N:].copy(), variable[:-N].copy(), lagged_index_corr, N = 100, statistic = 'correlation')
                         elif n == 0:
-                            # lagged_corr, _ = stats.pearsonr(fd_space, variable)
-                            # lagged_index_corr, _ = stats.pearsonr(fd_index_space, variable)
-                            # lagged_sig = monte_carlo_significance(fd_space, variable, lagged_corr, N = 5000, statistic = 'correlation')
-                            # lagged_index_sig = monte_carlo_significance(fd_index_space, variable, lagged_index_corr, N = 5000, statistic = 'correlation')
+                            # Correlation for no lag
                             results = stats.pearsonr(fd_space, variable, method = test_method)
                             results_index = stats.pearsonr(fd_index_space, variable, method = test_method)
-                            # lagged_corr = correlate(fd_space.copy(), variable.copy())
-                            # # Statistical significance test
-                            # lagged_sig = monte_carlo_significance(fd_space.copy(), variable.copy(), lagged_corr, N = 100, statistic = 'correlation')
 
-                            # # Repeat with the index
-                            # lagged_index_corr = correlate(fd_index_space.copy(), variable.copy())
-                            # # Statistical significance test
-                            # lagged_index_sig = monte_carlo_significance(fd_index_space.copy(), variable.copy(), lagged_index_corr, N = 100, statistic = 'correlation')
                         elif n > 0:
-                            # lagged_corr = stats.pearsonr(fd_space[:-N], variable[N:])
-                            # lagged_index_corr = stats.pearsonr(fd_index_space[:-N], variable[N:])
-                            # lagged_sig = monte_carlo_significance(fd_space[:-N], variable[N:], lagged_corr, N = 5000, statistic = 'correlation')
-                            # lagged_index_sig = monte_carlo_significance(fd_index_space[:-N], variable[N:], lagged_index_corr, N = 5000, statistic = 'correlation')
+                            # Correlation for positive lagged response
                             results = stats.pearsonr(fd_space[:-N], variable[N:], method = test_method)
                             results_index = stats.pearsonr(fd_index_space[:-N], variable[N:], method = test_method)
-                            # lagged_corr = correlate(fd_space[:-N].copy(), variable[N:].copy())
-                            # # Statistical significance test
-                            # lagged_sig = monte_carlo_significance(fd_space[:-N].copy(), variable[N:].copy(), lagged_corr, N = 100, statistic = 'correlation')
-
-                            # # Repeat with the index
-                            # lagged_index_corr = correlate(fd_index_space[:-N].copy(), variable[N:].copy())
-                            # # Statistical significance test
-                            # lagged_index_sig = monte_carlo_significance(fd_index_space[:-N].copy(), variable[N:].copy(), lagged_index_corr, N = 100, statistic = 'correlation', acc = True)
-
+                            
                         lagged_corr = results.statistic; lagged_sig = results.pvalue
                         lagged_index_corr = results_index.statistic; lagged_index_sig = results_index.pvalue
 
@@ -1196,6 +1193,10 @@ if __name__ == '__main__':
                 fd_starts[fd_type] = start_dates_ind
 
             if args.skip_eof_analysis:
+                if args.model == 'gldas':
+                    # Filler lon_ind fore the eof_analysis function
+                    lon_ind = None
+                    
                 # Collect index data
                 print('Loading %s and preparing data'%ind_sname)
                 _, fd_idx = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, return_fd_and_indices = True)
@@ -1210,88 +1211,6 @@ if __name__ == '__main__':
                         variable = load_raw_data(var, args.model)
                         eof_analysis(args, variable, mask, lat, lon, dates_all, lon_ind, ind_sname)
 
-                # # Reshape to time x space
-                # T, I, J = fd_idx.shape
-                # fd_idx = fd_idx.reshape(T, I*J).astype(np.float32)
-                # mask2d = mask.reshape(I*J)
-
-                # # Detrend data
-                # print('Detrending data')
-                # t = np.arange(T)
-                # _, _, fd_trend = least_squares(t, fd_idx)
-                # fd_idx = fd_idx - fd_trend
-
-                # # Apply cosine latitude weighting and replace missing values with 0
-                # print('Applying weights')
-                # weights = np.sqrt(np.cos(np.pi * lat/180).reshape(I*J))
-                # fd_idx = fd_idx * weights[np.newaxis,:]
-
-                # # Replace missing values with 0
-                # print('Removing NaNs')
-                # fd_idx = np.delete(fd_idx, mask2d == 0, axis = -1)
-                # fd_idx = np.where(np.isnan(fd_idx), 0, fd_idx)
-
-                # # EOFs of each index variable
-                # print('Data prepared; performing SVD')
-                # # C = (np.dot(fd_idx.T, fd_idx)/T).astype(np.float32) # space x space matrix
-                # PCs, sig, EOFs = np.linalg.svd(fd_idx)
-                # eigval = (sig**2)/T
-                # # del C; gc.collect()
-
-                # # Standardize PCs
-                # print('Standardizing PCs and getting regression patterns')
-                # PCs = (PCs - np.nanmean(PCs, axis = 0))/np.nanstd(PCs, axis = 0)
-
-                # # Regress PCs onto EOFS
-                # regress_patterns = least_squares(PCs, fd_idx)
-                # print(regress_patterns.shape, eigval.size)
-
-                # # Make plots
-                # var_explained = eigval/np.nansum(eigval) * 100
-                # print(f'Variance explained for {ind_sname} for first five modes: ', var_explained[:5])
-
-                # # Create the EOF plots (for the top three modes)
-                # for mode in range(1, 3+1):
-                #     savename = '%s_eof_mode_%d.png'%(ind_sname, mode)
-
-                #     # Replace the NaN values and fill with regression pattern
-                #     regress_map = np.zeros((I, J)) * np.nan
-                #     regress_map = regress_map.reshape(I*J)
-                #     k = 0
-                #     for ij in range(I*J):
-                #         if mask2d[ij] == 1:
-                #             regress_map[ij] = regress_patterns[mode-1,k]
-                #             k = k + 1
-                #     regress_map = regress_map.reshape(I, J)
-
-                #     # Correct longitude issues
-                #     tmp = regress_map[:,:,lon_ind]
-                #     regress_map = np.concatenate([tmp, regress_map[:,:,:lon_ind[0]]], axis = 2)
-
-                #     make_eof_plot(regress_map, 
-                #                   lat, 
-                #                   lon, 
-                #                   PCs[1:,mode-1], 
-                #                   dates_all, 
-                #                   ind_sname, 
-                #                   mode, 
-                #                   var_explained[mode-1], 
-                #                   path = '%s/%s'%(args.figure_path, args.model), 
-                #                   savename = savename)
-
-                # # Significance plots
-                # N = eigval.size
-                # # Possible title: Eigen Value for Each Mode with Standard Error
-                # delta_lambda = eigval * np.sqrt(2/N)
-                # modes = np.arange(1, 15+1)
-                # savename = '%s_eigen_confidence_interval.png'%ind_sname
-                # make_errorbar_plot(modes, eigval[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
-
-                # # Remove larger files to free up space for next analysis
-                # del fd_idx, PCs, EOFs, sig, eigval, delta_lambda, regress_patterns
-                # gc.collect()
-                
-
         if args.skip_energy_moisture_drivers:
             # Load precipitation
             precip = load_raw_data('tp', args.model)
@@ -1299,6 +1218,10 @@ if __name__ == '__main__':
             # Subset if necessary
             if np.invert(args.region == 'none'):
                 precip, _, _ = subset_data(precip, lat[:,0], lon[0,:], subset = args.region)
+
+            if args.model == 'gldas':
+                # Convert from kg m^-2 s^-2 to m day^-1 (division by density of water)
+                precip = precip/1000 * 3600 * 24
 
             T, I, J = precip.shape
 
@@ -1340,24 +1263,26 @@ if __name__ == '__main__':
                     ind_end = fd_starts[fd_type][ij]
                     for t in ind_end:
                         # If FD occurs at the near of the time series, start at the beginning of the time series
-                        if (t - 30) < 0:
+                        if (t - args.em_lag_days) < 0:
                             start = 0
                         else:
-                            start = t - 30
+                            start = t - args.em_lag_days
 
                         # Perform the average
                         spi_avg = np.nanmean(spi[start:t+1,ij])
                         pet_avg = np.nanmean(pet[start:t+1,ij])
                         
                         # Add data to the lists
-                        spi_fd.append(spi_avg)
-                        pet_fd.append(pet_avg)
+                        # spi_fd.append(spi_avg)
+                        # pet_fd.append(pet_avg)
+                        spi_fd.append(spi[start,ij])
+                        pet_fd.append(pet[start,ij])
 
                 # Convert lists to array to allow finding conditions
                 spi_fd = np.array(spi_fd)
                 pet_fd = np.array(pet_fd)
-                print(np.nanmin(pet_fd), np.nanmax(pet_fd), np.nanmean(pet_fd))
-                print(pet_fd)
+                print(np.nanmin(spi_fd), np.nanmax(spi_fd), np.nanmean(spi_fd))
+                print(spi_fd)
 
                 spi_anomalies[fd_type] = spi_fd
                 pet_anomalies[fd_type] = pet_fd
@@ -1410,91 +1335,6 @@ if __name__ == '__main__':
             #     print('%s RMSC with SESR: %4.3f'%(var, sesr_rmsc))
             #     print('%s RMSC with SM%s: %4.3f'%(var, level, sm_rmsc))
             #     print('%s RMSC with FDII%s: %4.3f'%(var, level, fdii_rmsc))
-
-            # # Detrend data
-            # t = np.arange(T)
-            # _, _, sesr_trend = least_squares(t, sesr)
-            # sesr = sesr - sesr_trend
-            # _, _, sm_trend = least_squares(t, sm)
-            # sm = sm - sm_trend
-            # _, _, fdii_trend = least_squares(t, fdii)
-            # fdii = fdii - fdii_trend
-            # del sesr_trend, sm_trend, fdii_trend
-            # gc.collect()
-
-            # # Apply cosine latitude weighting and replace missing values with 0
-            # weights = np.cos(np.pi * lat/180).reshape(I*J)
-            # sesr = sesr * weights[np.newaxis,:]
-            # sm = sm * weights[np.newaxis,:]
-            # fdii = fdii * weights[np.newaxis,:]
-
-            # # Replace missing values with 0
-            # sesr = np.delete(sesr, mask2d == 0, axis = -1)
-            # sesr = np.where(np.isnan(sesr), 0, sesr)
-            # sm = np.delete(sm, mask2d == 0, axis = -1)
-            # sm = np.where(np.isnan(sm), 0, sm)
-            # fdii = np.delete(fdii, mask2d == 0, axis = -1)
-            # fdii = np.where(np.isnan(fdii), 0, fdii)
-
-            # # EOFs of each index variable
-            # print('Data prepared; performing SVD')
-            # sesr_C = np.dot(sesr.T, sesr).astype(np.float32) # space x space matrix
-            # PCs_sesr, sig_sesr, EOFs_sesr = np.linalg.svd(sesr_C)
-            # eigval_sesr = (sig_sesr**2)/T
-            # del sesr_C; gc.collect()
-
-            # sm_C = np.dot(sm.T, sm)
-            # PCs_sm, sig_sm, EOFs_sm = np.linalg.svd(sm_C)
-            # eigval_sm = (sig_sm**2)/T
-            # del sm_C; gc.collect()
-
-            # fdii_C = np.dot(fdii.T, fdii)
-            # PCs_fdii, sig_fdii, EOFs_fdii = np.linalg.svd(fdii_C)
-            # eigval_fdii = (sig_fdii**2)/T
-            # del fdii_C; gc.collect()
-
-            # # Standardize PCs
-            # print('Standardizing PCs and getting regression patterns')
-            # PCs_sesr = (PCs_sesr - np.nanmean(PCs_sesr, axis = 0))/np.nanstd(PCs_sesr, axis = 0)
-            # PCs_sm = (PCs_sm - np.nanmean(PCs_sm, axis = 0))/np.nanstd(PCs_sm, axis = 0)
-            # PCs_fdii = (PCs_fdii - np.nanmean(PCs_fdii, axis = 0))/np.nanstd(PCs_fdii, axis = 0)
-
-            # # Regress PCs onto EOFS
-            # regress_patterns_sesr, _, _ = least_squares(PCs_sesr, sesr.T)
-            # regress_patterns_sm, _, _ = least_squares(PCs_sm, sm.T)
-            # regress_patterns_fdii, _, _ = least_squares(PCs_fdii, fdii.T)
-
-            # # Make plots
-            # var_explained_sesr = eigval_sesr/np.nansum(eigval_sesr) * 100
-            # print(var_explained_sesr[:5])
-            # var_explained_sm = eigval_sm/np.nansum(eigval_sm) * 100
-            # print(var_explained_sm[:5])
-            # var_explained_fdii = eigval_fdii/np.nansum(eigval_fdii) * 100
-            # print(var_explained_fdii[:5])
-            # # plot_regress_pattern_and_PCs(regress_pattern, var_explained[0])
-
-            # # Significance plots
-            # N = eigval_sesr.size
-            # # Possible title: Eigen Value for Each Mode with Standard Error
-            # delta_lambda = eigval_sesr * np.sqrt(2/N)
-            # modes = np.arange(1, 15+1)
-            # savename = 'sesr_eigen_confidence_interval.png'
-            # make_errorbar_plot(modes, eigval_sesr[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
-
-            # delta_lambda = eigval_sm * np.sqrt(2/N)
-            # modes = np.arange(1, 15+1)
-            # savename = 'sm_eigen_confidence_interval.png'
-            # make_errorbar_plot(modes, eigval_sm[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
-
-            # delta_lambda = eigval_fdii * np.sqrt(2/N)
-            # modes = np.arange(1, 15+1)
-            # savename = 'fdii_eigen_confidence_interval.png'
-            # make_errorbar_plot(modes, eigval_fdii[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
-            # Tasks:
-            # - Try without reducing spatial grids
-            # - Add regression pattern plots
-            # - Make plots look nice
-            # - Might try MCA?
             
         if args.skip_correlation_plots:
             if args.region == 'none':
@@ -1554,12 +1394,13 @@ if __name__ == '__main__':
             # Tick labels
             x_ticks = ['SPI<-1', 'PET>1', 'SPI<-1 &\nPET<1', 'SPI>-1 &\nPET>1', 'SPI<-1 &\nPET>1']
 
-            savename = 'moisture_energy_driver_for_layer_%s_fd%s.png'%(level, region)
+            savename = 'moisture_energy_driver_%d_lag_day_for_layer_%s_fd%s.png'%(args.em_lag_days, level, region)
             make_barplots(bar_data, 
                           fd_types, 
                           'Relative Number (%) of FDs\nwith Given Conditions',
                           x_ticks,
                           bar_err = bar_std,
+                          title = '%d Days before FD'%args.em_lag_days,
                           path = '%s/%s/'%(args.figure_path, args.model),
                           savename = savename)
 

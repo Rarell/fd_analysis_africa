@@ -15,7 +15,7 @@ raw_data_paths = {
     'e': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/evaporation', 
     'pev': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/potential_evaporation', 
     'tp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/precipitation', 
-    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/moisture_surface'], 
+    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/moisture_surface'], 
     'swvl1': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', 
     'swvl2': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', 
     'swvlrz': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm']
@@ -43,7 +43,7 @@ raw_data_base_names = {
         'e': 'africa_gldas.evaporation.daily_', 
         'pev': 'africa_gldas.potential_evaporation.daily_', 
         'tp': 'africa_gldas.precipitation.daily_', 
-        'vpd': ['africa_gldas.temperature.daily_', 'africa_2m_dewpoint_'], 
+        'vpd': ['africa_2m_temperature_', 'africa_2m_dewpoint_'], 
         'swvl1': 'africa_gldas.soil_moisture_0-10cm.daily_', 
         'swvl2': 'africa_gldas.soil_moisture_10-40cm.daily_', 
         'swvlrz': ['africa_gldas.soil_moisture_0-10cm.daily_', 'africa_gldas.soil_moisture_10-40cm.daily_']
@@ -197,12 +197,12 @@ def load_raw_data(sname, model):
         path = [p%model for p in path]
     elif (sname == 'ws') & (model == 'era5'):
         path = [p%model for p in path]
-    elif isinstance(path, list):
-        path = [path[0]%model, path[1]]
-    elif (sname == 'd2m'):
+    # elif isinstance(path, list):
+    #     path = [path[0]%model, path[1]]
+    elif (sname == 'd2m') | ((sname == 'vpd')):
         path = path
     elif (model == 'gldas') & (sname == 'ws'):
-        path = path[0]
+        path = path[0]%model
     else:
         path = path%model
 

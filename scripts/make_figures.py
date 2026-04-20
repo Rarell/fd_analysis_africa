@@ -27,13 +27,28 @@ def make_statistics_maps(data, lat, lon, statistic, fd_types, times, cmin = 0, c
     """
 
     # Set colorbar information 
-    cint = (cmax - cmin)/20
-    clevs = np.arange(cmin, cmax + cint, cint)
-    nlevs = len(clevs)
-    if statistic == 'severity':
-        cmap  = plt.get_cmap(name = 'Spectral', lut = nlevs)
+    if statistic == 'characteristics':
+        # For characteristics, assumes data is given in order as frequency, duration, and severity
+        cmins = [0, 0, -1]
+        cmaxes = [50, 50, 0]
+        cints = [(cmax - cmin)/20 for (cmax, cmin) in zip(cmaxes, cmins)]
+        clevs = [np.arange(cmin, cmax + cint, cint) for (cmax, cmin, cint) in zip(cmaxes, cmins, cints)]
+        nlevs = [len(clev) for clev in clevs]
+        cmaps = [plt.get_cmap(name = 'Spectral_r', lut = nlevs[0]), 
+                 plt.get_cmap(name = 'Spectral_r', lut = nlevs[1]), 
+                 plt.get_cmap(name = 'Spectral', lut = nlevs[2])]
+
+        # Also define/initialize the mappables for the colorbar
+        cses = [None, None, None]
+
     else:
-        cmap  = plt.get_cmap(name = 'Spectral_r', lut = nlevs)
+        cint = (cmax - cmin)/20
+        clevs = np.arange(cmin, cmax + cint, cint)
+        nlevs = len(clevs)
+        if statistic == 'severity':
+            cmap  = plt.get_cmap(name = 'Spectral', lut = nlevs)
+        else:
+            cmap  = plt.get_cmap(name = 'Spectral_r', lut = nlevs)
 
     # Lonitude and latitude tick information
     lat_int = 10
@@ -95,31 +110,56 @@ def make_statistics_maps(data, lat, lon, statistic, fd_types, times, cmin = 0, c
                 axes[i,j].set_ylabel(fd_types[i].upper(), fontsize = 22)
             
             # Plot the data
+            if statistic == 'characteristics':
+                cmap = cmaps[j]
+                cmin = cmins[j]; cmax = cmaxes[j]
+
             cs = axes[i,j].pcolormesh(lon, lat, data[j][i], vmin = cmin, vmax = cmax,
                                       cmap = cmap, transform = proj, zorder = 1)
+
+            if statistic == 'characteristics':
+                cses[j] = cs
             
             # Set the map extent
             axes[i,j].set_extent([lower_lon, upper_lon, lower_lat, upper_lat])
 
     # Set the colorbar size and location
-    cbax = fig.add_axes([0.150, 0.0685, 0.72, 0.020])
+    if statistic == 'characteristics':
+        cbaxes = [fig.add_axes([0.150, 0.0685, 0.22, 0.020]),
+                  fig.add_axes([0.400, 0.0685, 0.22, 0.020]),
+                  fig.add_axes([0.650, 0.0685, 0.22, 0.020])]
+        extends = ['max', 'max', 'min']
 
-    if statistic == 'severity':
-        extend = 'min'
-        label = 'Normalized Severity'
+        # Make the colorbars
+        for n in range(len(cbaxes)):
+            cbar = mcolorbar.Colorbar(cbaxes[n], mappable = cses[n], cmap = cmaps[n], extend = extends[n], orientation = 'horizontal')
+
+            # Make the colorbar label
+            cbar.ax.set_xlabel(times[n], fontsize = 22)
+
+            # Set the colorbar tick size
+            for i in cbar.ax.xaxis.get_ticklabels():
+                i.set_size(22)
+
     else:
-        extend = 'max'
-        label = statistic.title()
+        cbax = fig.add_axes([0.150, 0.0685, 0.72, 0.020])
 
-    # Make the colorbar
-    cbar = mcolorbar.Colorbar(cbax, mappable = cs, cmap = cmap, extend = extend, orientation = 'horizontal')
+        if statistic == 'severity':
+            extend = 'min'
+            label = 'Normalized Severity'
+        else:
+            extend = 'max'
+            label = statistic.title()
 
-    # Make the colorbar label
-    cbar.ax.set_xlabel(label, fontsize = 22)
+        # Make the colorbar
+        cbar = mcolorbar.Colorbar(cbax, mappable = cs, cmap = cmap, extend = extend, orientation = 'horizontal')
 
-    # Set the colorbar tick size
-    for i in cbar.ax.xaxis.get_ticklabels():
-        i.set_size(22)
+        # Make the colorbar label
+        cbar.ax.set_xlabel(label, fontsize = 22)
+
+        # Set the colorbar tick size
+        for i in cbar.ax.xaxis.get_ticklabels():
+            i.set_size(22)
             
     # Save the figure
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
@@ -137,17 +177,37 @@ def make_trend_maps(data, lat, lon, statistic, fd_types, times, sig = None, cmin
              'severity': 'Unitless / Year'}
 
     # Set colorbar information 
-    cint = (cmax - cmin)/20
-    clevs = np.arange(cmin, cmax + cint, cint)
-    nlevs = len(clevs)
-    if significance_plots:
-        # cmap = plt.get_cmap(name = 'Paired', lut = nlevs)
-        cmap = mcolors.ListedColormap(['#FF796C', '#DC143C', '#7BC8F6', '#0000FF'])
-    else:
-        if statistic == 'severity':
-            cmap = plt.get_cmap(name = 'BrBG', lut = nlevs)
+    if statistic == 'characteristics':
+        # For characteristics, assumes data is given in order as frequency, duration, and severity
+        cmins = [-0.06, -0.5, -0.0015]
+        cmaxes = [0.06, 0.5, 0.0015]
+        cints = [(cmax - cmin)/20 for (cmax, cmin) in zip(cmaxes, cmins)]
+        clevs = [np.arange(cmin, cmax + cint, cint) for (cmax, cmin, cint) in zip(cmaxes, cmins, cints)]
+        nlevs = [len(clev) for clev in clevs]
+       
+        if significance_plots:
+            # cmap = plt.get_cmap(name = 'Paired', lut = nlevs)
+            cmap = mcolors.ListedColormap(['#FF796C', '#DC143C', '#7BC8F6', '#0000FF'])
         else:
-            cmap = plt.get_cmap(name = 'BrBG_r', lut = nlevs)
+            cmaps = [plt.get_cmap(name = 'BrBG_r', lut = nlevs[0]), 
+                     plt.get_cmap(name = 'BrBG_r', lut = nlevs[1]), 
+                     plt.get_cmap(name = 'BrBG', lut = nlevs[2])]
+
+        # Also define/initialize the mappables for the colorbar
+        cses = [None, None, None]
+    
+    else:
+        cint = (cmax - cmin)/20
+        clevs = np.arange(cmin, cmax + cint, cint)
+        nlevs = len(clevs)
+        if significance_plots:
+            # cmap = plt.get_cmap(name = 'Paired', lut = nlevs)
+            cmap = mcolors.ListedColormap(['#FF796C', '#DC143C', '#7BC8F6', '#0000FF'])
+        else:
+            if statistic == 'severity':
+                cmap = plt.get_cmap(name = 'BrBG', lut = nlevs)
+            else:
+                cmap = plt.get_cmap(name = 'BrBG_r', lut = nlevs)
 
     # Lonitude and latitude tick information
     lat_int = 10
@@ -217,8 +277,15 @@ def make_trend_maps(data, lat, lon, statistic, fd_types, times, sig = None, cmin
                 cs = axes[i,j].pcolormesh(lon, lat, significance_data, vmin = 0, vmax = 3,
                                           cmap = cmap, transform = proj, zorder = 1)
             else:
+                if statistic == 'characteristics':
+                    cmap = cmaps[j]
+                    cmin = cmins[j]; cmax = cmaxes[j]
+
                 cs = axes[i,j].pcolormesh(lon, lat, data[i][j], vmin = cmin, vmax = cmax,
                                           cmap = cmap, transform = proj, zorder = 1)
+
+                if statistic == 'characteristics':
+                    cses[j] = cs
             
             # Set the map extent
             axes[i,j].set_extent([lower_lon, upper_lon, lower_lat, upper_lat])
@@ -226,25 +293,60 @@ def make_trend_maps(data, lat, lon, statistic, fd_types, times, sig = None, cmin
 
     # Make the colorbar if needed
     if significance_plots == False:
-        # Set the colorbar size and location
-        cbax = fig.add_axes([0.150, 0.0685, 0.72, 0.020])
+        if statistic == 'characteristics':
+            cbaxes = [fig.add_axes([0.150, 0.0685, 0.22, 0.020]),
+                      fig.add_axes([0.400, 0.0685, 0.22, 0.020]),
+                      fig.add_axes([0.650, 0.0685, 0.22, 0.020])]
 
-        if statistic == 'severity':
-            extend = 'both'
-            label = 'Normalized Severity Trends [%s]'%units[statistic]
+            keys = ['frequency', 'duration', 'severity']
+
+            # Make the colorbars
+            for n in range(len(cbaxes)):
+                cbar = mcolorbar.Colorbar(cbaxes[n], mappable = cses[n], cmap = cmaps[n], extend = 'both', orientation = 'horizontal')
+
+                # Make the colorbar label
+                cbar.ax.set_xlabel('%s Trends\n[%s]'%(times[n], units[keys[n]]), fontsize = 22)
+
+                # Frequency and severity ticks labels don't quite fit on the smaller colorbars
+                # Adjust the ticks to use half the labels to better fit
+                if keys[n] in ['frequency', 'severity']:
+                    ticks = cbar.ax.xaxis.get_ticklabels()
+                    ticks_new = []
+                    # Ticks obtained matplotlib use a special hyphen not in UTF-8; 
+                    # replace it with the normal hyphen if needed
+                    for n in range(len(ticks)):
+                        tick = ticks[n].get_text()
+                        if '−' in tick:
+                            tick = tick.replace('−', '-')
+                        ticks_new.append(float(tick))
+                        
+                    ticks_new = np.array(ticks_new)
+                    
+                    # Set the ticks
+                    cbar.ax.xaxis.set_ticks(ticks_new[::2])
+
+                # Set the colorbar tick size
+                for i in cbar.ax.xaxis.get_ticklabels():
+                    i.set_size(22)
         else:
-            extend = 'both'
-            label = '%s Trends [%s]'%(statistic.title(), units[statistic])
+            # Set the colorbar size and location
+            cbax = fig.add_axes([0.150, 0.0685, 0.72, 0.020])
 
-        cbar = mcolorbar.Colorbar(cbax, mappable = cs, cmap = cmap, extend = extend, orientation = 'horizontal')
+            if statistic == 'severity':
+                extend = 'both'
+                label = 'Normalized Severity Trends [%s]'%units[statistic]
+            else:
+                extend = 'both'
+                label = '%s Trends [%s]'%(statistic.title(), units[statistic])
 
-        # Make the colorbar label
-        cbar.ax.set_xlabel(label, fontsize = 22)
+            cbar = mcolorbar.Colorbar(cbax, mappable = cs, cmap = cmap, extend = extend, orientation = 'horizontal')
 
-        # Set the colorbar tick size
-        for i in cbar.ax.xaxis.get_ticklabels():
-            i.set_size(22)
-    
+            # Make the colorbar label
+            cbar.ax.set_xlabel(label, fontsize = 22)
+
+            # Set the colorbar tick size
+            for i in cbar.ax.xaxis.get_ticklabels():
+                i.set_size(22)
     else:
         # Custom patches
         not_sig_pos = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.0), edgecolor = 'k', label = 'Not Significant Increasing')
@@ -577,7 +679,7 @@ def make_variable_boxplots(data, var_labels, labels, fd_type, path = './', saven
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
     plt.show(block = False)
 
-def make_barplots(data, labels, ylabel, xtick_labels, bar_err = None, path = './', savename = 'tmp.png'):
+def make_barplots(data, labels, ylabel, xtick_labels, bar_err = None, title = None, path = './', savename = 'tmp.png'):
     '''
     Make a boxplot of multiple inputs
     '''
@@ -589,6 +691,9 @@ def make_barplots(data, labels, ylabel, xtick_labels, bar_err = None, path = './
               '#DC143C', # Crimson
               '#0000FF'  # Blue
               ]
+
+    if title is not None:
+        ax.set_title(title, fontsize = 22)
 
     # Make the bar plots
     for n, dataset in enumerate(data):
@@ -897,24 +1002,42 @@ def create_regional_boxes(lc, lat, lon, legend_labels, savename = 'tmp.png', pat
         'MD', # Madagascar
     ]
 
-    colors = [
-        '#05457b', # Water
-        '#05450c', # Evergreen Needleleaf
-        '#023b01', # Evergreen Broadleaf
-        '#01bb02', # Deciduous Needleleaf
-        '#01ff01', # Deciduous Broadleaf
-        '#013b01', # Mixed Forest
-        '#d0e6b5', # Closed Shrubland
-        '#00d600', # Open Shrublands
-        '#00ff00', # Woody Savannas
-        '#ffff00', # Savannas
-        '#943c00', # Grasslands
-        '#001149', # Permanent Wetlands
-        '#ff0000', # Croplands
-        '#ffb400', # Urban and Built Up
-        '#00ffaf', # Cropland and Natural Vegetation Mosaic
-        '#00ffff', # Snow and Ice
+    colors = [ # Using colors from a Google Earth example (https://developers.google.com/earth-engine/guides/image_visualization#colab-python_8)
+        '#aec3d4', # Water
+        '#152106', # Evergreen Needleleaf
+        '#225129', # Evergreen Broadleaf
+        '#369b47', # Deciduous Needleleaf
+        '#30eb5b', # Deciduous Broadleaf
+        '#387242', # Mixed Forest
+        '#6a2325', # Closed Shrubland
+        '#c3aa69', # Open Shrublands
+        '#b76031', # Woody Savannas
+        '#d9903d', # Savannas
+        '#91af40', # Grasslands
+        '#111149', # Permanent Wetlands
+        '#ff0000', # Croplands; Use the AI suggested color for better visibility
+        # '#cdb33b', # Croplands
+        '#cc0013', # Urban and Built Up
+        '#33280d', # Cropland and Natural Vegetation Mosaic
+        '#d7cdcc', # Snow and Ice
         '#f7e084', # Baren/Sparsely Vegetated
+        # '#05457b', # Water
+        # '#05450c', # Evergreen Needleleaf
+        # '#023b01', # Evergreen Broadleaf
+        # '#01bb02', # Deciduous Needleleaf
+        # '#01ff01', # Deciduous Broadleaf
+        # '#013b01', # Mixed Forest
+        # '#d0e6b5', # Closed Shrubland
+        # '#00d600', # Open Shrublands
+        # '#00ff00', # Woody Savannas
+        # '#ffff00', # Savannas
+        # '#943c00', # Grasslands
+        # '#001149', # Permanent Wetlands
+        # '#ff0000', # Croplands
+        # '#ffb400', # Urban and Built Up
+        # '#00ffaf', # Cropland and Natural Vegetation Mosaic
+        # '#00ffff', # Snow and Ice
+        # '#f7e084', # Baren/Sparsely Vegetated
     ]
 
     # Determine which classes to exclude
@@ -1069,9 +1192,20 @@ if __name__ == '__main__':
         make_trend_maps(slope_map,
                         lat, 
                         lon, 
-                        'frequency', 
+                        'characteristics', 
                         fd_types, 
-                        ['Annual', 'MAMJJA', 'SONDJF'], 
+                        ['Frequency', 'Duration', 'Normalized Severity'], 
+                        cmin = 0, 
+                        cmax = 3, 
+                        path = './', 
+                        savename = 'test_trend.png')
+
+        make_trend_maps(slope_map,
+                        lat, 
+                        lon, 
+                        'characteristics', 
+                        fd_types, 
+                        ['Frequency', 'Duration', 'Normalized Severity'], 
                         sig = map_pval,
                         cmin = 0, 
                         cmax = 3, 
