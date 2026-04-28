@@ -954,11 +954,13 @@ if __name__ == '__main__':
     # Sensitivity analysis:
     if args.fd_sensitivity_analysis:
         if args.model == 'era5':
-            variable_snames = ['tair', 'd2m', 'sp', 'ws', 'e', 'pev', 'tp', 'vpd', 'swvl1', 'swvl2', 'swvlrz', 'enso', 'iod']
-            labels = ['T', r'T$_d$', 'Pres', 'WS', 'E', 'PE', 'Prec', 'VPD', 'SM1', 'SM2', 'RZSM', 'ENSO', 'IOD/\nDMI']
+            variable_snames = ['tair', 'd2m', 'e', 'pev', 'tp', 'vpd', 'swvlrz', 'enso', 'iod', 'mjo']
+            labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
         else:
-            variable_snames = ['tair', 'sp', 'ws', 'e', 'pev', 'tp', 'swvl1', 'swvl2', 'swvlrz', 'enso', 'iod']
-            labels = ['T', 'Pres', 'WS', 'E', 'PE', 'Prec', 'SM1', 'SM2', 'RZSM', 'ENSO', 'IOD/\nDMI']
+            variable_snames = ['tair', 'd2m', 'e', 'pev', 'tp', 'vpd', 'swvlrz', 'enso', 'iod', 'mjo']
+            labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
+            # variable_snames = ['tair', 'sp', 'ws', 'e', 'pev', 'tp', 'swvlrz', 'enso', 'iod', 'mjo']
+            # labels = ['T', 'Pres', 'WS', 'E', 'PE', 'Prec', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
 
         # Construct array of datetimes
         start = datetime(1979, 1, 1); end = datetime(2024, 12, 31)

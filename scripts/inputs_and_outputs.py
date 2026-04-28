@@ -5,20 +5,23 @@ from typing import Tuple
 from netCDF4 import Dataset
 from datetime import datetime, timedelta
 
-from utils import wind_speed, vapor_pressure_deficit
+from utils import wind_speed, vapor_pressure_deficit, dewpoint
 
 raw_data_paths = {
     'tair': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/temperature',
-    'd2m': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/moisture_surface', 
+    'd2m': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/moisture_surface', 
     'sp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/pressure', 
     'ws': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/wind_speed', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/wind_speed'],
     'e': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/evaporation', 
     'pev': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/potential_evaporation', 
     'tp': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/precipitation', 
-    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/era5/moisture_surface'], 
+    'vpd': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/temperature', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/moisture_surface'], 
     'swvl1': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', 
     'swvl2': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', 
-    'swvlrz': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm']
+    'swvlrz': ['/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm', '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/liquid_vsm'],
+    'enso': '/ourdisk/hpc/ai2es/sedris/climate_indices',
+    'iod': 'dmi.had.long',
+    'mjo': 'mjo.timeseries',
 }
 
 raw_data_base_names = {
@@ -37,25 +40,25 @@ raw_data_base_names = {
     },
     'gldas': {
         'tair': 'africa_gldas.temperature.daily_',
-        'd2m': 'africa_2m_dewpoint_', 
+        'd2m': 'africa_gldas.specific_humidity.daily_', 
         'sp': 'africa_gldas.pressure.daily_', 
         'ws': 'africa_gldas.wind_speed.daily_', 
         'e': 'africa_gldas.evaporation.daily_', 
         'pev': 'africa_gldas.potential_evaporation.daily_', 
         'tp': 'africa_gldas.precipitation.daily_', 
-        'vpd': ['africa_2m_temperature_', 'africa_2m_dewpoint_'], 
+        'vpd': ['africa_gldas.temperature.daily_', 'africa_gldas.specific_humidity.daily_'], 
         'swvl1': 'africa_gldas.soil_moisture_0-10cm.daily_', 
         'swvl2': 'africa_gldas.soil_moisture_10-40cm.daily_', 
         'swvlrz': ['africa_gldas.soil_moisture_0-10cm.daily_', 'africa_gldas.soil_moisture_10-40cm.daily_']
     },
     'enso': 'enso.timeseries',
     'iod': 'dmi.had.long',
-    'mjo': ''
+    'mjo': 'mjo.timeseries'
 }
 
 gldas_snames = {
     'tair': 'temp',
-    'd2m': 'd2m', 
+    'd2m': 'q', 
     'sp': 'pres', 
     'ws': 'wspd', 
     'e': 'evap', 
@@ -195,12 +198,12 @@ def load_raw_data(sname, model):
     path = raw_data_paths[sname]
     if isinstance(path, list) & (sname != 'vpd') & (sname != 'ws'):
         path = [p%model for p in path]
-    elif (sname == 'ws') & (model == 'era5'):
+    elif ((sname == 'ws') & (model == 'era5')) | (sname == 'vpd'):
         path = [p%model for p in path]
     # elif isinstance(path, list):
     #     path = [path[0]%model, path[1]]
-    elif (sname == 'd2m') | ((sname == 'vpd')):
-        path = path
+    # elif ((sname == 'vpd')):
+    #     path = path
     elif (model == 'gldas') & (sname == 'ws'):
         path = path[0]%model
     else:
@@ -235,17 +238,35 @@ def load_raw_data(sname, model):
             ws = wind_speed(u, v)
             data.append(ws)
         elif sname == 'vpd':
-            # Load T and T_d
-            with Dataset(file, 'r') as nc:
-                if model == 'era5':
-                    keys = nc.variables.keys()
-                    sname_t = 'tair' if 'tair' in keys else 't2m'
-                else:
-                    sname_t = sname
-                tair = nc.variables[sname_t][:]
-            
-            with Dataset(files_2[n], 'r') as nc:
-                tdew = nc.variables['d2m'][:]
+            if model == 'era5':
+                # Load T and T_d
+                with Dataset(file, 'r') as nc:
+                    if model == 'era5':
+                        keys = nc.variables.keys()
+                        sname_t = 'tair' if 'tair' in keys else 't2m'
+                    else:
+                        sname_t = sname
+                    tair = nc.variables[sname_t][:]
+                
+                with Dataset(files_2[n], 'r') as nc:
+                    tdew = nc.variables['d2m'][:]
+            elif model == 'gldas':
+                # Load T and q
+                with Dataset(file, 'r') as nc:
+                    tair = nc.variables['temp'][:]
+                
+                with Dataset(files_2[n], 'r') as nc:
+                    q = nc.variables['q'][:]
+
+                # Also load p
+                path_p = raw_data_paths['sp']%model
+                base_fn_p = raw_data_base_names[model]['sp']
+                files_3 = glob('%s/%s*.nc'%(path_p, base_fn_p), recursive = True)
+                with Dataset(np.sort(files_3)[n], 'r') as nc:
+                    p = nc.variables['pres'][:]
+
+                # Calculate dewpoint
+                tdew = dewpoint(q, p)
 
             # Calculate vapor pressure deficit
             vpd = vapor_pressure_deficit(tair, tdew)
@@ -261,6 +282,22 @@ def load_raw_data(sname, model):
             # Calculate RZSM
             rzsm = (7/28) * sm1 + (21/28) * sm2 if model == 'era5' else (10/40) * sm1 + (30/40) * sm2
             data.append(rzsm)
+        elif (sname == 'q') & (model == 'gldas'):
+            # Load q
+            with Dataset(file, 'r') as nc:
+                q = nc.variables['q'][:]
+
+            # Also load p
+            path_p = raw_data_paths['sp']%model
+            base_fn_p = raw_data_base_names[model]['sp']
+            files_3 = glob('%s/%s*.nc'%(path_p, base_fn_p), recursive = True)
+            with Dataset(np.sort(files_3)[n], 'r') as nc:
+                p = nc.variables['pres'][:]
+
+            # Calculate dewpoint
+            tdew = dewpoint(q, p)
+
+            data.append(tdew)
         elif sname == 'tair':
             # Load the data; note with T, some snames may be t2m instead of tair
             with Dataset(file, 'r') as nc:
@@ -291,11 +328,14 @@ def load_climate_index(sname, model = 'era5'):
     # Determine if ENSO is being loaded (its csv has multiple indices to load for SSTs, SSTAs, and for each ENSO region)
     usecols = (1, 2, 3, 4, 5, 6, 7, 8) if sname.lower() == 'enso' else 1
 
+    if sname.lower() == 'mjo':
+        usecols = 2
+
     # Determine the filename
     filename = raw_data_base_names[sname]
 
     # Note IOD data is raw, its time stamps needs to be prepared
-    timestamps_prepared = False if sname.lower() == 'iod' else True
+    timestamps_prepared = False if (sname.lower() == 'iod') | (sname.lower() == 'mjo') else True
 
     # Load the data
     data = np.loadtxt('%s/%s.csv'%(index_path, filename), delimiter = ',', skiprows = 1, usecols = usecols)
@@ -304,6 +344,9 @@ def load_climate_index(sname, model = 'era5'):
     timestamps = np.loadtxt('%s/%s.csv'%(index_path, filename), delimiter = ',', dtype = str, skiprows = 1, usecols = 0)
     if timestamps_prepared:
         dates = np.array([datetime.fromisoformat(date) for date in timestamps])
+    elif sname == 'mjo':
+        # MJO timestamps have a unique format
+        dates = np.array([datetime.strptime(date, '%m/%d/%Y') for date in timestamps])
     else:
         dates = np.array([datetime.strptime(date, '%Y-%m-%d') for date in timestamps])
 
@@ -325,7 +368,7 @@ def load_climate_index(sname, model = 'era5'):
     T = dates_new.size
     index_new_dates = np.ones((T,)) * np.nan
     for t, date in enumerate(dates_new):
-         # Find the most recent time stamp from grid_old
+        # Find the most recent time stamp from grid_old
         ind = np.where(date >= dates)[0]
 
         # If no most recent dates were found (ENSO data starts in 1981), skip

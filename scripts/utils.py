@@ -241,6 +241,33 @@ def vapor_pressure_deficit(
 
     return vpd
 
+def dewpoint(q, p):
+    '''
+    Calculate dewpoint temperature from specific humidity and pressure
+    '''
+
+    # Ratio of R_d/R_v
+    eps = 0.622
+
+    # Vapor pressure can be obtained by solving q = eps * e /(p - (1-eps)e)
+    denom = eps + (1 - eps) * q
+    e = q * p/denom # e is in Pa
+
+    # Inverting the empirical CC equation gives Td from e
+
+    # Coefficients to empirical CC equation
+    e0 = 611.2 # Pa
+    a = 17.67
+    b = 243.5
+
+    log_e = np.log(e/e0)**-1
+    denom = a*log_e - 1
+
+    # Calculate Td
+    tdew = b/denom + 273.15 # Td in K
+
+    return tdew
+
 def calculate_spi(precip, time, compress = False):
     '''
     Calculate the standardized precipitation index (SPI) from precipitation data. 

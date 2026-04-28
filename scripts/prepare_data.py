@@ -26,16 +26,17 @@ if __name__ == '__main__':
             'volumetric_soil_water_layer_4'
         ],
         'gldas':[
-            'gldas.temperature.daily', # Note GLDAS2 does not have dewpoint temperature
-            'gldas.precipitation.daily',
-            'gldas.evaporation.daily',
-            'gldas.potential_evaporation.daily',
-            'gldas.pressure.daily',
-            'gldas.wind_speed.daily',
-            'gldas.soil_moisture_0-10cm.daily',
-            'gldas.soil_moisture_10-40cm.daily',
-            'gldas.soil_moisture_40-100cm.daily',
-            'gldas.soil_moisture_100-200cm.daily'
+            # 'gldas.temperature.daily', # Note GLDAS2 does not have dewpoint temperature
+            # 'gldas.precipitation.daily',
+            # 'gldas.evaporation.daily',
+            # 'gldas.potential_evaporation.daily',
+            # 'gldas.pressure.daily',
+            'gldas.specific_humidity.daily',
+            # 'gldas.wind_speed.daily',
+            # 'gldas.soil_moisture_0-10cm.daily',
+            # 'gldas.soil_moisture_10-40cm.daily',
+            # 'gldas.soil_moisture_40-100cm.daily',
+            # 'gldas.soil_moisture_100-200cm.daily'
         ]
         }
 
@@ -55,16 +56,17 @@ if __name__ == '__main__':
             'liquid_vsm'
     ],
     'gldas': [
-        'temperature',
-        'precipitation',
-        'evaporation',
-        'potential_evaporation',
-        'pressure',
-        'wind_speed',
-        'soil_moisture_0-10cm',
-        'soil_moisture_10-40cm',
-        'soil_moisture_40-100cm',
-        'soil_moisture_100-200cm'
+        # 'temperature',
+        # 'precipitation',
+        # 'evaporation',
+        # 'potential_evaporation',
+        # 'pressure',
+        'surface_moisture',
+        # 'wind_speed',
+        # 'soil_moisture_0-10cm',
+        # 'soil_moisture_10-40cm',
+        # 'soil_moisture_40-100cm',
+        # 'soil_moisture_100-200cm'
     ]
     }
 
