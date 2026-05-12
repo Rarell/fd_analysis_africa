@@ -71,7 +71,7 @@ def subset_data(
     # Subset the latitude and longitude
     lat_sub = latitude[lat_ind]
     lon_sub = longitude[lon_ind]
-
+    
     # Subset the data
     if len(data.shape) < 3:
         data_sub = data[:,lon_ind]

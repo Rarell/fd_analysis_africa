@@ -716,6 +716,7 @@ def make_barplots(data, labels, ylabel, xtick_labels, bar_err = None, title = No
 
     # Set t label
     ax.set_ylabel(ylabel, fontsize = 22)
+    ax.set_ylim([0, 65])
 
     # Set the tick size
     for i in ax.xaxis.get_ticklabels() + ax.yaxis.get_ticklabels():

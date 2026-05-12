@@ -395,7 +395,7 @@ def load_start_times(args, fn_base, sname, lat = None, lon = None, region = 'non
     
     T, I, J = fd_total.shape
     fd_total = fd_total.reshape(T, I*J)
-
+    
     fd_start_times = {}
     fd_start_times_ind = {}
 
@@ -437,7 +437,7 @@ def trend_analysis(x, y):
     slope, intercept, yhat = least_squares(x, y)
 
     # Perform significance test (via Monte-Carlo Bootstrapping)
-    pval = monte_carlo_significance(x.copy(), y.copy(), slope.copy(), N = 5000)
+    pval = monte_carlo_significance(x.copy(), y.copy(), slope.copy(), N = 1000)
 
     # Reshape if necessary
     if len(y.shape) > 1:
@@ -617,11 +617,17 @@ if __name__ == '__main__':
         lon_tmp = lon[:,lon_ind]
         lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
 
+        sub_lat = lat[::-1,0]
+    else:
+        sub_lat = lat[:,0]
+
     # Subset the mask if necessary
     if np.invert(args.region == 'none'):
-            mask, _, _ = subset_data(mask, lat[:,0], lon[0,:], subset = args.region)
+            mask, _, _ = subset_data(mask, sub_lat, lon[0,:], subset = args.region)
 
     region = '' if args.region == 'none' else '_%s'%args.region
+
+    climate_indices = ['enso', 'iod', 'mjo']
 
     # Make figures for FD statistics if desired
     if args.fd_stats_analysis:
@@ -801,23 +807,31 @@ if __name__ == '__main__':
             severity = severity/max_sev; severity_sum = severity_sum/max_sev; severity_win = severity_win/max_sev
 
             if args.region == 'none':
+                if args.model == 'gldas':
+                    # For unknown reasons, using GLDAS data past 2011 in the trend analysis produces 
+                    # strange gridding artifacts that are not realistic; perform the trend only to 2011 for GLDAS
+                    # and all for ERA5
+                    ind = np.where(years <= 2011)[0]
+                else:
+                    ind = np.where(years <= 2025)[0]
+
                 T, I, J = frequency.shape
                 # Perform trend analysis
-                slope_freq, _, pval_freq = trend_analysis(years.copy(), frequency.copy())
-                slope_dur, _, pval_dur = trend_analysis(years.copy(), duration.copy())
-                slope_sev, _, pval_sev = trend_analysis(years.copy(), severity.copy())
+                slope_freq, _, pval_freq = trend_analysis(years[ind].copy(), frequency[ind,:].copy())
+                slope_dur, _, pval_dur = trend_analysis(years[ind].copy(), duration[ind,:].copy())
+                slope_sev, _, pval_sev = trend_analysis(years[ind].copy(), severity[ind,:].copy())
 
                 T, I, J = frequency_sum.shape
                 # Repeat for "summer"
-                slope_freq_sum, _, pval_freq_sum = trend_analysis(years.copy(), frequency_sum.copy())
-                slope_dur_sum, _, pval_dur_sum = trend_analysis(years.copy(), duration_sum.copy())
-                slope_sev_sum, _, pval_sev_sum = trend_analysis(years.copy(), severity_sum.copy())
+                slope_freq_sum, _, pval_freq_sum = trend_analysis(years[ind].copy(), frequency_sum[ind,:].copy())
+                slope_dur_sum, _, pval_dur_sum = trend_analysis(years[ind].copy(), duration_sum[ind,:].copy())
+                slope_sev_sum, _, pval_sev_sum = trend_analysis(years[ind].copy(), severity_sum[ind,:].copy())
 
                 T, I, J = frequency_win.shape
                 # Repeat for "winter"
-                slope_freq_win, _, pval_freq_win = trend_analysis(years.copy(), frequency_win.copy())
-                slope_dur_win, _, pval_dur_win = trend_analysis(years.copy(), duration_win.copy())
-                slope_sev_win, _, pval_sev_win = trend_analysis(years.copy(), severity_win.copy())
+                slope_freq_win, _, pval_freq_win = trend_analysis(years[ind].copy(), frequency_win[ind,:].copy())
+                slope_dur_win, _, pval_dur_win = trend_analysis(years[ind].copy(), duration_win[ind,:].copy())
+                slope_sev_win, _, pval_sev_win = trend_analysis(years[ind].copy(), severity_win[ind,:].copy())
 
                 # Add the trend variables to their respective lists
                 slope_freq[slope_freq == 0] = np.nan; pval_freq[np.isnan(slope_freq)] = np.nan
@@ -844,17 +858,17 @@ if __name__ == '__main__':
             # Peform trend analysis of overall means
             if np.invert(args.region == 'none'):
                 # Subset data to a region if necessary
-                frequency, _, _ = subset_data(frequency, lat[:,0], lon[0,:], subset = args.region)
-                duration, _, _ = subset_data(duration, lat[:,0], lon[0,:], subset = args.region)
-                severity, _, _ = subset_data(severity, lat[:,0], lon[0,:], subset = args.region)
+                frequency, _, _ = subset_data(frequency, sub_lat, lon[0,:], subset = args.region)
+                duration, _, _ = subset_data(duration, sub_lat, lon[0,:], subset = args.region)
+                severity, _, _ = subset_data(severity, sub_lat, lon[0,:], subset = args.region)
 
-                frequency_sum, _, _ = subset_data(frequency_sum, lat[:,0], lon[0,:], subset = args.region)
-                duration_sum, _, _ = subset_data(duration_sum, lat[:,0], lon[0,:], subset = args.region)
-                severity_sum, _, _ = subset_data(severity_sum, lat[:,0], lon[0,:], subset = args.region)
+                frequency_sum, _, _ = subset_data(frequency_sum, sub_lat, lon[0,:], subset = args.region)
+                duration_sum, _, _ = subset_data(duration_sum, sub_lat, lon[0,:], subset = args.region)
+                severity_sum, _, _ = subset_data(severity_sum, sub_lat, lon[0,:], subset = args.region)
 
-                frequency_win, _, _ = subset_data(frequency_win, lat[:,0], lon[0,:], subset = args.region)
-                duration_win, _, _ = subset_data(duration_win, lat[:,0], lon[0,:], subset = args.region)
-                severity_win, _, _ = subset_data(severity_win, lat[:,0], lon[0,:], subset = args.region)
+                frequency_win, _, _ = subset_data(frequency_win, sub_lat, lon[0,:], subset = args.region)
+                duration_win, _, _ = subset_data(duration_win, sub_lat, lon[0,:], subset = args.region)
+                severity_win, _, _ = subset_data(severity_win, sub_lat, lon[0,:], subset = args.region)
 
                 T, I, J = frequency.shape
 
@@ -978,7 +992,7 @@ if __name__ == '__main__':
 
         # Make the hypthesis testing for correlation
         rng = np.random.default_rng()
-        test_method = stats.MonteCarloMethod(n_resamples = 5000, rvs = (rng.normal, rng.normal))
+        test_method = stats.MonteCarloMethod(n_resamples = 1000, rvs = (rng.normal, rng.normal))
 
         # Make dictionaries for the energy/moisture limited analysis
         spi_anomalies = {}
@@ -989,7 +1003,7 @@ if __name__ == '__main__':
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
             if args.skip_variable_boxplots:
                 # Collect datetimes of FD start; note the shape is lat x lon
-                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = lat[:,0], lon = lon[0,:], region = args.region)
+                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = sub_lat, lon = lon[0,:], region = args.region)
 
                 variables = {}
                 variables_5day = {}
@@ -1000,10 +1014,24 @@ if __name__ == '__main__':
                     variable = load_raw_data(var_sname, args.model)
 
                     if np.invert(args.region == 'none'):
-                        variable, _, _ = subset_data(variable, lat[:,0], lon[0,:], subset = args.region)
+                        variable, _, _ = subset_data(variable, sub_lat, lon[0,:], subset = args.region)
 
                     if (var_sname == 'pev') & (args.model == 'era5'):
                         variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
+
+                    # Apply a 5 day running mean to bring pentad behavior
+                    if var_sname not in climate_indices:
+                        T = variable.shape[0]
+                        runmean = 5
+
+                        # Determine the appropriate start and end index for a centered running mean 
+                        start_ind = int(np.round((runmean - 1)/2))
+                        end_ind = int(T + runmean - 1 - start_ind)
+
+                        # Apply running mean for each grid point
+                        for i in range(I):
+                            for j in range(J):
+                                variable[:,i,j] = np.convolve(variable[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
 
                     # Standardize the variable
                     variable = standardize_variable(variable, 
@@ -1079,13 +1107,27 @@ if __name__ == '__main__':
                 
             if args.skip_correlation_plots:
                 print(fd_type)
+                
                 # Load FD and index data for all years
                 fd, fd_index = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, return_fd_and_indices = True)
 
                 # Subset if necessary
                 if np.invert(args.region == 'none'):
-                    fd, _, _ = subset_data(fd, lat[:,0], lon[0,:], subset = args.region)
-                    fd_index, _, _ = subset_data(fd_index, lat[:,0], lon[0,:], subset = args.region)
+                    fd, _, _ = subset_data(fd, sub_lat, lon[0,:], subset = args.region)
+                    fd_index, _, _ = subset_data(fd_index, sub_lat, lon[0,:], subset = args.region)
+
+                # Apply a 5 day running mean to smooth out white noise and deliver pentad behavior
+                T = fd_index.shape[0]
+                runmean = 5
+
+                # Determine the appropriate start and end index for a centered running mean 
+                start_ind = int(np.round((runmean - 1)/2))
+                end_ind = int(T + runmean - 1 - start_ind)
+
+                # Apply running mean for each grid point
+                for i in range(I):
+                    for j in range(J):
+                        fd_index[:,i,j] = np.convolve(fd_index[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
 
                 # Reshape to time x space for easier calculations
                 T, I, J = fd.shape
@@ -1104,10 +1146,24 @@ if __name__ == '__main__':
 
                     # Subset if necessary
                     if np.invert(args.region == 'none'):
-                        variable, _, _ = subset_data(variable, lat[:,0], lon[0,:], subset = args.region)
+                        variable, _, _ = subset_data(variable, sub_lat, lon[0,:], subset = args.region)
 
                     if (var_sname == 'pev') & (args.model == 'era5'):
                         variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
+
+                    if var_sname not in climate_indices:
+                        T = variable.shape[0]
+                        # Apply a 5 day running mean to smooth out white noise and deliver pentad behavior
+                        runmean = 5
+
+                        # Determine the appropriate start and end index for a centered running mean 
+                        start_ind = int(np.round((runmean - 1)/2))
+                        end_ind = int(T + runmean - 1 - start_ind)
+
+                        # Apply running mean for each grid point
+                        for i in range(I):
+                            for j in range(J):
+                                variable[:,i,j] = np.convolve(variable[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
 
                     # Reshape for statistical calculations
                     variable = variable.reshape(T, I*J).astype(np.float32)
@@ -1191,8 +1247,9 @@ if __name__ == '__main__':
 
             if args.skip_energy_moisture_drivers:
                 # Collect datetimes of FD start; note the shape is lat x lon
-                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = lat[:,0], lon = lon[0,:], region = args.region)
+                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = sub_lat, lon = lon[0,:], region = args.region)
                 fd_starts[fd_type] = start_dates_ind
+                # print(fd_starts)
 
             if args.skip_eof_analysis:
                 if args.model == 'gldas':
@@ -1219,7 +1276,7 @@ if __name__ == '__main__':
 
             # Subset if necessary
             if np.invert(args.region == 'none'):
-                precip, _, _ = subset_data(precip, lat[:,0], lon[0,:], subset = args.region)
+                precip, _, _ = subset_data(precip, sub_lat, lon[0,:], subset = args.region)
 
             if args.model == 'gldas':
                 # Convert from kg m^-2 s^-2 to m day^-1 (division by density of water)
@@ -1235,7 +1292,7 @@ if __name__ == '__main__':
 
             # Subset if necessary
             if np.invert(args.region == 'none'):
-                pet, _, _ = subset_data(pet, lat[:,0], lon[0,:], subset = args.region)
+                pet, _, _ = subset_data(pet, sub_lat, lon[0,:], subset = args.region)
 
             if args.model == 'era5':
                 pet = -1*pet# Convert so positive PET represents energy fluxed into the atmosphere
