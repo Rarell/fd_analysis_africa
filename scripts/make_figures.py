@@ -1143,6 +1143,73 @@ def create_regional_boxes(lc, lat, lon, legend_labels, savename = 'tmp.png', pat
     plt.show(block = False)
     plt.close()
 
+def create_single_map(data, lat, lon, cbar_label, savename = 'tmp.png', path = './'):
+    '''
+    Create a map displaying data
+    '''
+
+    # Colorbar information
+    cmin = 0; cmax = 2500 # np.ceil(np.nanmax(data))
+    clevs = np.arange(cmin, cmax + 1)
+    nlevs = len(clevs)
+    cmap = plt.get_cmap(name = 'Greens', lut = nlevs)
+
+    # Lonitude and latitude tick information
+    lat_int = 10
+    lon_int = 20
+    
+    LatLabel = np.arange(-90, 90, lat_int)
+    LonLabel = np.arange(-180, 180, lon_int)
+    
+    LonFormatter = cticker.LongitudeFormatter()
+    LatFormatter = cticker.LatitudeFormatter()
+
+    # Projection information
+    proj = ccrs.PlateCarree()
+
+    # Initialize the figure
+    fig = plt.figure(figsize = [20,20])
+    ax = fig.add_subplot(1,1,1, projection = proj)
+
+    # Add ocean features
+    ax.add_feature(cfeature.OCEAN, facecolor = 'white', edgecolor = 'white', zorder = 2)
+
+    # Add coastlines and country borders
+    ax.coastlines(edgecolor = 'black', zorder = 3)
+    ax.add_feature(cfeature.BORDERS, facecolor = 'none', edgecolor = 'black', zorder = 3)
+
+    cs = ax.pcolormesh(lon, lat, data, vmin = cmin, vmax = cmax, cmap = cmap, transform = proj, zorder = 1)
+
+    ax.set_yticklabels(LatLabel, fontsize = 26)
+    ax.yaxis.set_major_formatter(LatFormatter)
+    
+    ax.set_xticklabels(LonLabel, fontsize = 26)
+    ax.xaxis.set_major_formatter(LonFormatter)
+    
+    # Adjust the ticks
+    ax.set_xticks(LonLabel, crs = proj)
+    ax.set_yticks(LatLabel, crs = proj)
+
+    # Set the map extent
+    ax.set_extent([lower_lon, upper_lon, lower_lat, upper_lat])
+
+    # Set the colorbar size and location
+    cbax = fig.add_axes([0.880, 0.11, 0.030, 0.700])
+
+    cbar = mcolorbar.Colorbar(cbax, mappable = cs, cmap = cmap, extend = 'max', orientation = 'vertical')
+
+    # Make the colorbar label
+    cbar.ax.set_ylabel(cbar_label, fontsize = 26)
+
+    # Set the colorbar tick size
+    for i in cbar.ax.yaxis.get_ticklabels():
+        i.set_size(26)
+   
+    # Save the figure
+    plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
+    plt.show(block = False)
+    plt.close()
+
 
 if __name__ == '__main__':
     # Test and refine some of the figures

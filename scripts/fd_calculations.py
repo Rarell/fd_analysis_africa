@@ -66,7 +66,7 @@ def calculate_climatology(
 
     # Remove values that exceed a certain limit as they are likely an error
     esr[esr < 0] = np.nan
-    esr[esr > 3] = np.nan 
+    # esr[esr > 3] = np.nan 
     # print(np.nansum(np.isnan(esr)))
 
     print('Initialized variables, calculation means')
@@ -206,7 +206,7 @@ def calculate_sesr(
 
     # Remove values that exceed a certain limit as they are likely an error
     esr[esr < 0] = np.nan
-    esr[esr > 3] = np.nan
+    # esr[esr > 3] = np.nan
     # print(np.nansum(np.isnan(esr)))
 
     # Collect date information
@@ -867,6 +867,9 @@ if __name__ == '__main__':
         # For GLDAS, some unit conversion is needed for consistency with ET
         if args.model == 'gldas': 
             pet = pet / (2.5e6) # Division by latent heat of vaporization yields conversion of W m^-2 = J s^-1 m^-2 -> kg s^-1 m^-2
+            
+            # Some issues with GLDAS data clustering around certain values that cause some issues
+            et = np.where(et <= 0.000002, np.nan, et)
 
     
     if args.load_sm_data:
@@ -914,6 +917,20 @@ if __name__ == '__main__':
 
         # Convert to arrays
         sm[1] = np.concatenate(sm[1]); sm[2] = np.concatenate(sm[2]); sm[3] = np.concatenate(sm[3]); sm[4] = np.concatenate(sm[4])
+
+        if args.model == 'gldas':
+            # Deal with some issues in GLDAS have values cluster around minima and maxima values
+            sm[1] = np.where(sm[1] <= 2.5, np.nan, sm[1])
+            sm[1] = np.where(sm[1] >= 97.5, np.nan, sm[1])
+
+            sm[2] = np.where(sm[2] <= 2.5, np.nan, sm[2])
+            sm[2] = np.where(sm[2] >= 97.5, np.nan, sm[2])
+
+            sm[3] = np.where(sm[3] <= 2.5, np.nan, sm[3])
+            sm[3] = np.where(sm[3] >= 97.5, np.nan, sm[3])
+
+            sm[4] = np.where(sm[4] <= 2.5, np.nan, sm[4])
+            sm[4] = np.where(sm[4] >= 97.5, np.nan, sm[4])
 
     # Load SM percentiles
     if args.load_smp_data:

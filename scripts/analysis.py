@@ -12,7 +12,7 @@ from glob import glob
 
 from statistics_calculations import least_squares, correlate, monte_carlo_significance
 from inputs_and_outputs import load_fd_one_year, load_index_one_year, load_raw_data, load_pickle, save_pickle
-from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots, make_errorbar_plot, make_eof_plot
+from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots, make_errorbar_plot, make_eof_plot, create_single_map
 from utils import subset_data, standardize_variable, calculate_spi
 
 warnings.filterwarnings('ignore')
@@ -143,13 +143,14 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
     index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
     index_files = np.sort(index_files)
 
-    if ('rz' in fn_base) & (index_base is not None):
-        sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
-        sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
-        index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
-        index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base2), recursive = True)
-        index_files_1 = np.sort(index_files_1)
-        index_files_2 = np.sort(index_files_2)
+    if ind_sname is not None:
+        if 'rz' in index_base:
+            sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
+            sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
+            index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
+            index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base2), recursive = True)
+            index_files_1 = np.sort(index_files_1)
+            index_files_2 = np.sort(index_files_2)
 
     # Load an FD file to initialize the frequency and duration datasets
     with Dataset(fd_files[0], 'r') as nc:
@@ -230,7 +231,7 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
 
         else:
             for j in range(J):
-                frequency[i,j], duration[i,j], severity[i,j], _ = calculate_fd_statistics(fd_total[:,i,j], 
+                frequency[i,j], duration[i,j], severity[i,j], _ = calculate_fd_characteristics(fd_total[:,i,j], 
                                                                                           index_total[:,i,j], 
                                                                                           time, 
                                                                                           mask[i,j],
@@ -1128,6 +1129,13 @@ if __name__ == '__main__':
                 for i in range(I):
                     for j in range(J):
                         fd_index[:,i,j] = np.convolve(fd_index[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
+                # Cut off ends to avoid biasing correlation results
+                fd_index = fd_index[2:,:,:]
+                fd_index = fd_index[:-2,:,:]
+
+                # Cut off the ends of FD to match the shape of FD index and the variable
+                fd = fd[2:,:,:]
+                fd = fd[:-2,:,:]
 
                 # Reshape to time x space for easier calculations
                 T, I, J = fd.shape
@@ -1164,8 +1172,12 @@ if __name__ == '__main__':
                         for i in range(I):
                             for j in range(J):
                                 variable[:,i,j] = np.convolve(variable[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
+                    # Cut off ends to avoid biasing correlation results
+                    variable = variable[2:,:,:]
+                    variable = variable[:-2,:,:]
 
                     # Reshape for statistical calculations
+                    T, I, J = variable.shape
                     variable = variable.reshape(T, I*J).astype(np.float32)
 
                     # Perform the correlation
@@ -1220,16 +1232,19 @@ if __name__ == '__main__':
                             # Correlation analysis for negative lagged response
                             results = stats.pearsonr(fd_space[N:], variable[:-N], method = test_method)
                             results_index = stats.pearsonr(fd_index_space[N:], variable[:-N], method = test_method)
+                            var_print = variable[:-N]; ind_print = fd_index_space[N:]
 
                         elif n == 0:
                             # Correlation for no lag
                             results = stats.pearsonr(fd_space, variable, method = test_method)
                             results_index = stats.pearsonr(fd_index_space, variable, method = test_method)
+                            var_print = variable; ind_print = fd_index_space
 
                         elif n > 0:
                             # Correlation for positive lagged response
                             results = stats.pearsonr(fd_space[:-N], variable[N:], method = test_method)
                             results_index = stats.pearsonr(fd_index_space[:-N], variable[N:], method = test_method)
+                            var_print = variable[N:]; ind_print = fd_index_space[:-N]
                             
                         lagged_corr = results.statistic; lagged_sig = results.pvalue
                         lagged_index_corr = results_index.statistic; lagged_index_sig = results_index.pvalue
@@ -1552,6 +1567,7 @@ if __name__ == '__main__':
     # Make map highlighting specific regions
     if args.make_region_map:
         from pyhdf.SD import SD, SDC
+        from netCDF4 import Dataset
 
         # Collect the land cover type data
         file = SD('../../modis/raw/MCD12C1.A2022001.061.2023244164746.hdf', SDC.READ)
@@ -1591,3 +1607,53 @@ if __name__ == '__main__':
         # Close the file
         data_holder.endaccess()
         file.end()
+
+        # Load precipitation data to make a climatological dataset
+        years = np.arange(1979, 2024+1)
+
+        fn_base = 'africa_total_precipitation' if args.model == 'era5' else 'africa_gldas.precipitation.daily'
+        sname   = 'tp' if args.model == 'era5' else 'precip'
+        units   = 'm' if args.model == 'era5' else 'kg m^-2 s^-1'
+
+        precip = []
+        for year in years:
+            print(year)
+            with Dataset('%s/%s/precipitation/%s_%04d.nc'%(args.data_path, args.model, fn_base, year), 'r') as nc:
+                # Load the data
+                lat = nc.variables['lat'][:]
+                lon = nc.variables['lon'][:]
+                precip_daily = nc.variables[sname][:]
+
+                # Convert to mm
+                if units == 'm':
+                    precip_daily = precip_daily * 1000
+                else:
+                    # Note GLDAS is in units of kg m^-2 s^-1, divide by density of water and convert s^-1 to day^-1 to get m day^-1
+                    precip_daily = (precip_daily / 1000) * 3600 * 24
+                    precip_daily = precip_daily * 1000 # m to mm
+
+                # Add an annual accumulation of precipitation; the climatology will be the average annual accumulation
+                precip.append(np.nansum(precip_daily, axis = 0))
+
+        # Stack the list into an array
+        precip = np.array(precip)
+
+        # Corrections to the longitude for era5
+        if args.model == 'era5':
+            lon_ind = np.where(lon[0,:] > 330)[0]
+            lon_tmp = lon[:,lon_ind]
+            lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
+
+            tmp = precip[:,:,lon_ind]
+            precip = np.concatenate([tmp, precip[:,:,:lon_ind[0]]], axis = -1)
+
+        # Make the precipitation climatology plot
+        savename = '%s_africa_precip_climatology_map.png'%args.model
+        create_single_map(
+            np.nanmean(precip, axis = 0), 
+            lat, 
+            lon, 
+            'Precipitation [mm]', 
+            savename = savename, 
+            path = args.figure_path,
+        )
