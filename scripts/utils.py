@@ -1,9 +1,15 @@
+'''Provide various generic utilities for the
+flash drought calculations, including subsetting, sorting,
+decomposing metric names, regression, and variable 
+(dewpoint, wind speed, etc.) calculations
+'''
+
 import numpy as np
 from scipy import stats
 from scipy.special import gamma, gammainc
 from datetime import datetime, timedelta
 from tqdm import tqdm
-from typing import Tuple
+from typing import Tuple, Optional, Union
 
 # All acceptable subsets and their upper and low lat/lon
 subsets = { # Formatted as lower_lat, upper_lat, lower_lon, upper_lon
@@ -28,13 +34,13 @@ skip_variables = ['time', 'latitude', 'longitude', 'forecast_step', 'datetime']
 underscore_variables = ['tp']
 
 def subset_data(
-        data, 
-        latitude, 
-        longitude, 
-        subset
+        data: np.ndarray, 
+        latitude: np.ndarray, 
+        longitude: np.ndarray, 
+        subset: str,
         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
-    Subset global dataset to a specific region
+    Subset a dataset to a specific region
     Note this function takes out a box region from a larger set of spatial data
 
     Inputs:
@@ -61,6 +67,7 @@ def subset_data(
         
     # Get longitude indices for the subset
     if lower_lon > upper_lon:
+        # Special case where longitude passes the prime meridian (from 360 degrees to 0)
         lon_ind = np.where((longitude >= lower_lon) | (longitude <= upper_lon))[0]
     else:
         lon_ind = np.where((longitude >= lower_lon) & (longitude <= upper_lon))[0]
@@ -199,9 +206,15 @@ def least_squares(x, y) -> Tuple[float, float]:
     
     return xhat[0], xhat[1]
 
-def wind_speed(u, v) -> float:
+def wind_speed(u, v) -> Union[float,np.ndarray]:
     '''
     Calculate the wind speed from loaded u and v components
+
+    Inputs:
+    :param u,v: Zonal/horizontal and meridional/north-south wind components
+
+    Outputs:
+    :param ws: Computed wind speed
     '''
 
     # Calculate WS
@@ -213,9 +226,17 @@ def vapor_pressure_deficit(
         temperature, 
         dewpoint, 
         convert_to_celsius: bool = True
-        ) -> np.ndarray:
+        ) -> Union[float,np.ndarray]:
     '''
     Calculate vapor pressure deficit (VPD) (Pa), from the temperature (K) and dewpoint temperature (K)
+
+    Inputs:
+    :param temperature, dewpoint: Air and dewpoint temperatures respectively in K 
+                                  (or degrees C with convert_to_celsius = False). Can be float or np.ndarray)
+    :param convert_to_celsius: Bool. Convert temperature and dewpoint from Kelvin to Celsius. Default = True
+
+    Outputs:
+    :param vpd: Calculated VPD (same type as temperature/dewpoint)
     '''
 
     # The empirical form of the CC equation uses temperature/dewpoint in Celsius
@@ -241,9 +262,16 @@ def vapor_pressure_deficit(
 
     return vpd
 
-def dewpoint(q, p):
+def dewpoint(q, p) -> Union[float,np.ndarray]:
     '''
     Calculate dewpoint temperature from specific humidity and pressure
+
+    Inputs:
+    :param q: Specific humidity in kg/kg
+    :param p: Pressure in Pa
+
+    Outputs:
+    :param tdew: Calculated dewpoint temperature in K (same type as q/p)
     '''
 
     # Ratio of R_d/R_v
@@ -253,7 +281,7 @@ def dewpoint(q, p):
     denom = eps + (1 - eps) * q
     e = q * p/denom # e is in Pa
 
-    # Inverting the empirical CC equation gives Td from e
+    # Inverting the empirical CC equation gives Td derived from e
 
     # Coefficients to empirical CC equation
     e0 = 611.2 # Pa
@@ -268,16 +296,18 @@ def dewpoint(q, p):
 
     return tdew
 
-def calculate_spi(precip, time, compress = False):
+def calculate_spi(
+        precip, 
+        time, 
+        ) -> np.ndarray:
     '''
-    Calculate the standardized precipitation index (SPI) from precipitation data. 
+    Calculate the standardized precipitation index (SPI) from precipitation data.
     SPI index is on the same time scale as the input data.
 
     Inputs:
-    :param precip: Input precipitation data (in kg m^-2 s^-1; should be for over 10+ years). Time x lat x lon format
+    :param precip: Input precipitation data (in m; should be for over 10+ years). Time x lat x lon format
     :param time: Vector of datetimes corresponding to the timestamp in each timestep in precip.
-    :param compress: Boolean of whether to compress the SPI to float32 to save space. Note this makes the data half as precise.
-
+    
     Outputs:
     :param spi: The SPI drought index.
     '''
@@ -300,7 +330,7 @@ def calculate_spi(precip, time, compress = False):
     precipitation = precipitation.reshape(T, I*J)
     spi = spi.reshape(T, I*J)
 
-    # Create one year of data with a leap year
+    # Create an array for one year of data with a leap year
     one_year = np.array([datetime(2012, 1, 1) + timedelta(days = day) for day in range(N)])
 
     for t, date in tqdm(enumerate(one_year[:N]), desc = 'Calculating SPI'):
@@ -337,15 +367,12 @@ def calculate_spi(precip, time, compress = False):
             cdf = np.where((cdf > 0.999), cdf-0.001, cdf)
             cdf = np.where((cdf < 0.001), cdf+0.001, cdf)
 
+            # Determine the normal distribution
             spi[ind,ij] = stats.norm.ppf(cdf, loc = 0, scale = 1)
 
 
     # Return SPI to a 3D format
     spi = spi.reshape(T, I, J)
-
-    # Compress the data?
-    # if compress:
-    #     spi = spi.astype(np.float32)
 
     return spi
 
@@ -357,21 +384,21 @@ def standardize_variable(
         days_per_year: int = 366
         ) -> np.ndarray:
     '''
-    Calculates the standardized anomalies of a daily ERA5 variable.
+    Calculates the standardized anomalies of a daily variable.
     Climatological data is calculated for all grid points and for all timestamps in the year.
 
     Inputs:
     :param variable: Dataset to be standardized (np.ndarray, with shape time x lat x lon)
-    :param dates_all: Datetimes labels for each time step in e and pet (np.ndarray with shape time)
+    :param dates_all: Datetime labels for each time step in variable (np.ndarray with shape time)
     :param start: Datetime of first date in the climatology to consider (e.g., Jan 1, 1980)
     :param end: Datetime of end date in climatology to consider (e.d., Dec 31, 2020)
-    :param days_per_year: Total number of days in one year of data (use 366 if using daily data to include leap day)
+    :param days_per_year: Total number of days in one year of data (use 366 if using daily data to include leap days)
 
     Outputs:
     :param anomalies: Standardized value of variable for each grid and date in year (np.ndarray of shape time x lat x lon)
     '''
     
-
+    # Initialize the anomaly variables
     T, I, J = variable.shape
     anomalies = np.ones((T, I, J))
     T = days_per_year # Numbers of days in a year
@@ -379,7 +406,7 @@ def standardize_variable(
     # Determine the indices for the climatology times
     clim_ind = np.where( (dates_all >= start) & (dates_all <= end) )[0]
 
-    # All years in climatology calculations
+    # All years, months, and days in climatology calculations
     all_years = np.unique([date.year for date in dates_all[clim_ind]])
     years = np.array([date.year for date in dates_all[clim_ind]])
 
@@ -402,7 +429,7 @@ def standardize_variable(
         # Get all days in the current date in the loop
         ind = np.where( (date.day == days) & (date.month == months) )[0]
 
-        # Sum over all all ESR in a given day
+        # Sum over all variable in a given day
         tmp_sum = np.nansum(variable[ind,:,:], axis = 0)
         means[t,:,:] = np.nansum([means[t,:,:], tmp_sum], axis = 0) # np.nansum to account for any NaNs
         N[t] = N[t] + len(ind)
@@ -424,7 +451,7 @@ def standardize_variable(
         error = np.nansum((variable[ind,:,:] - means[t,:,:])**2, axis = 0)
         stds[t,:,:] = np.nansum([stds[t,:,:], error], axis = 0)
 
-    # One final loop to finish standard deviation calculations
+    # Loop again to finish standard deviation calculations
     for t, date in enumerate(dates_year):
         stds[t,:,:] = np.sqrt(stds[t,:,:]/(N[t] - 1))
 

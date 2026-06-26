@@ -1,3 +1,7 @@
+'''Provides functions for loading and
+saving datasets
+'''
+
 import numpy as np
 import pickle
 from glob import glob
@@ -7,6 +11,7 @@ from datetime import datetime, timedelta
 
 from utils import wind_speed, vapor_pressure_deficit, dewpoint
 
+# Pre-determine pathing information for the datasets
 raw_data_paths = {
     'tair': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/temperature',
     'd2m': '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s/moisture_surface', 
@@ -24,6 +29,7 @@ raw_data_paths = {
     'mjo': 'mjo.timeseries',
 }
 
+# Pre-determine the filename of each dataset
 raw_data_base_names = {
     'era5': {
         'tair': 'africa_2m_temperature_',
@@ -56,6 +62,7 @@ raw_data_base_names = {
     'mjo': 'mjo.timeseries'
 }
 
+# Pre-determine the short names (used in nc files) for each variable for GLDAS
 gldas_snames = {
     'tair': 'temp',
     'd2m': 'q', 
@@ -70,6 +77,7 @@ gldas_snames = {
     'swvlrz': 'swvlrz'
 }
 
+# Determine which variables are climate indices
 climate_indices = ['enso', 'iod', 'mjo']
 
 def load_fd_one_year(
@@ -112,6 +120,7 @@ def load_fd_one_year(
             ind = np.where( (months >= 9) | (months <= 2) )[0]
             fd = fd[ind,:,:]
             dates_dt = dates_dt[ind]
+            
     return fd, dates_dt
 
 def load_index_one_year(
@@ -127,10 +136,10 @@ def load_index_one_year(
 
     Inputs:
     :param file: Path + filename of the year of index data to load
-    :param sname: Dictionary key of the data load; if None no data is loaded
+    :param sname: Dictionary key of the data to load; if None no data is loaded
     :param index_base: Base filename of the index data
     :param times: String indicating whether to return full year of index data, or only for summer/winter months
-    :param I, J: Spatial dimensions to make placeholder data if sname == None
+    :param I, J: Spatial dimensions used to make placeholder data if sname == None
 
     Outputs:
     :param index_data: Loaded index data
@@ -139,6 +148,7 @@ def load_index_one_year(
     if sname is not None:
         # For root zone, two soil layers need to be loaded to calculate RZSM
         if 'rz' in index_base:
+        	# Load the top layer of SM data
             with Dataset(file[0], 'r') as nc:
                 index_data_1 = nc.variables[sname[0]][:]
                 dates = nc.variables['date'][:]
@@ -149,13 +159,15 @@ def load_index_one_year(
                 # Collect months
                 months = np.array([date.month for date in dates_dt])
             
+            # Load the second layer of SM data
             with Dataset(file[1], 'r') as nc:
                 index_data_2 = nc.variables[sname[1]][:]
 
-            # Calculate root zone SM
+            # Calculate root zone SM (RZSM)
             index_data = (7/28) * index_data_1 + (21/28) * index_data_2
 
         else:
+            # Load index data
             with Dataset(file, 'r') as nc:
                 index_data = nc.variables[sname][:]
                 dates = nc.variables['date'][:]
@@ -178,32 +190,36 @@ def load_index_one_year(
     
     else:
         # Placeholder so index_total can still be called when using FDII without 
-        # significant code changes or further bloating the params argument
+        # significant code changes or further bloating the params argument (in analysis.py)
         index_data = np.zeros((1, I, J)) * np.nan 
 
     return index_data
 
-def load_raw_data(sname, model):
+def load_raw_data(sname, model) -> np.ndarray:
     '''
     Load a set of raw data for a given variable
+    
+    Inputs:
+    :param sname: Dictionary key of the data to load
+    :param model: Reanalysis model the dataset comes from ("era5" or "gldas")
+    
+    Outputs:
+    :param data: Raw data loaded for all years available (np.ndarray with shape time x lat x lon)
     '''
 
     # Climate indices are located elsewhere, and requires different processing
     if sname in climate_indices:
-        # Load the climate index, and it is already in a np.ndarray, full timeseries
+        # Load the climate index, and make it a np.ndarray, full timeseries
         data = load_climate_index(sname, model)
         return data
 
     # Collect the path to the variable
     path = raw_data_paths[sname]
+    # Note some variables require multiple paths because they are calculated from multiple variables
     if isinstance(path, list) & (sname != 'vpd') & (sname != 'ws'):
         path = [p%model for p in path]
     elif ((sname == 'ws') & (model == 'era5')) | (sname == 'vpd'):
         path = [p%model for p in path]
-    # elif isinstance(path, list):
-    #     path = [path[0]%model, path[1]]
-    # elif ((sname == 'vpd')):
-    #     path = path
     elif (model == 'gldas') & (sname == 'ws'):
         path = path[0]%model
     else:
@@ -212,11 +228,13 @@ def load_raw_data(sname, model):
     # Collect the base names of the variable
     base_fn = raw_data_base_names[model][sname]
 
+	# GLDAS has different keys from what will be given; collect the correct one
     if model == 'gldas':
         sname = gldas_snames[sname]
 
-    # Collect the base names of the variable
+    # Collect the base filenames of the variable
     if isinstance(base_fn, list):
+        # Collect multiple set of filenames if multiple variables are needed
         files = glob('%s/%s*.nc'%(path[0], base_fn[0]), recursive = True)
         files_2 = glob('%s/%s*.nc'%(path[1], base_fn[1]), recursive = True)
         files_2 = np.sort(files_2)
@@ -225,6 +243,8 @@ def load_raw_data(sname, model):
 
     data = []
 
+	# Load data for each file (one file = one year of data) at a time, 
+	# concatenate into one array at the end 
     for n, file in enumerate(np.sort(files)):
         if sname == 'ws':
             # Load u and v components
@@ -237,11 +257,13 @@ def load_raw_data(sname, model):
             # Calculate wind speed
             ws = wind_speed(u, v)
             data.append(ws)
+            
         elif sname == 'vpd':
             if model == 'era5':
                 # Load T and T_d
                 with Dataset(file, 'r') as nc:
                     if model == 'era5':
+                        # Some funkiness with ERA5 dictionary keys for the temperature data
                         keys = nc.variables.keys()
                         sname_t = 'tair' if 'tair' in keys else 't2m'
                     else:
@@ -265,10 +287,10 @@ def load_raw_data(sname, model):
                 with Dataset(np.sort(files_3)[n], 'r') as nc:
                     p = nc.variables['pres'][:]
 
-                # Calculate dewpoint
+                # Calculate dewpoint from q and p
                 tdew = dewpoint(q, p)
 
-            # Calculate vapor pressure deficit
+            # Calculate vapor pressure deficit from T and T_d
             vpd = vapor_pressure_deficit(tair, tdew)
             data.append(vpd)
         elif sname == 'swvlrz':
@@ -294,12 +316,13 @@ def load_raw_data(sname, model):
             with Dataset(np.sort(files_3)[n], 'r') as nc:
                 p = nc.variables['pres'][:]
 
-            # Calculate dewpoint
+            # Calculate dewpoint from q and p
             tdew = dewpoint(q, p)
 
             data.append(tdew)
         elif sname == 'tair':
             # Load the data; note with T, some snames may be t2m instead of tair
+            # i.e., some funkiness with ERA5 dictionary keys for the temperature data
             with Dataset(file, 'r') as nc:
                 keys = nc.variables.keys()
                 sname_new = 'tair' if 'tair' in keys else 't2m'
@@ -314,11 +337,22 @@ def load_raw_data(sname, model):
 
     return data
 
-def load_climate_index(sname, model = 'era5'):
+def load_climate_index(sname, model: str = 'era5') -> np.ndarray:
     '''
-    Load a climate index
+    Load a climate index and process it into a daily gridded array
+    
+    At each grid point the climate index will repeat, but can be compared with other
+    gridded datasets
+    
+    Inputs:
+    :param sname: Dictionary key of the climate index to load
+    :param model: Reanalysis model the dataset to generate the grid for ("era5" or "gldas")
+    
+    Outputs:
+    :param data: Raw data loaded for all years available (np.ndarray with shape time x lat x lon)
     '''
-    # Load the mask as a test grid
+    
+    # Load the mask as a reference grid
     with Dataset('%s/%s/aridity_mask.nc'%('/ourdisk/hpc/ai2es/sedris/fd_analysis/data', model), 'r') as nc:
         mask = nc.variables['aim'][0,:,:]
 
@@ -328,19 +362,20 @@ def load_climate_index(sname, model = 'era5'):
     # Determine if ENSO is being loaded (its csv has multiple indices to load for SSTs, SSTAs, and for each ENSO region)
     usecols = (1, 2, 3, 4, 5, 6, 7, 8) if sname.lower() == 'enso' else 1
 
+	# MJO also has multiple entries; take the third column (15 day running average applied to MJO)
     if sname.lower() == 'mjo':
         usecols = 2
 
     # Determine the filename
     filename = raw_data_base_names[sname]
 
-    # Note IOD data is raw, its time stamps needs to be prepared
+    # Note IOD and MJO data need their time stamps prepared
     timestamps_prepared = False if (sname.lower() == 'iod') | (sname.lower() == 'mjo') else True
 
     # Load the data
     data = np.loadtxt('%s/%s.csv'%(index_path, filename), delimiter = ',', skiprows = 1, usecols = usecols)
 
-    # Turn the timestamps into datetimes arrays
+    # Load timestamps and turn them into datetimes arrays
     timestamps = np.loadtxt('%s/%s.csv'%(index_path, filename), delimiter = ',', dtype = str, skiprows = 1, usecols = 0)
     if timestamps_prepared:
         dates = np.array([datetime.fromisoformat(date) for date in timestamps])
@@ -353,11 +388,6 @@ def load_climate_index(sname, model = 'era5'):
     # If ENSO is the index, get the 3.4 region SSTAs
     if sname.lower() == 'enso':
         data = data[:,5]
-
-    # Select data for the desired year range
-    # years = np.array([date.year for date in data['time']])
-    # ind = np.where((years >= 1979) & (years <= 2024))[0]
-    # data = data[ind]; dates = dates[ind]
 
     # Construct a set of daily timestamps
     start = datetime(1979, 1, 1); end = datetime(2024, 12, 31)

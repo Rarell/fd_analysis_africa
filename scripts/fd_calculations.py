@@ -1,7 +1,13 @@
+'''Calculates flash drought (FD) indices and identifies
+FD based on three different methods: Christian et al. 2023 (https://doi.org/10.1038/s43247-023-00826-1),
+Yuan et al. 2019 (https://doi.org/10.1038/s41467-019-12692-7), and Otkin et al. 2021 (https://doi.org/10.3390/atmos12060741).
+Results are then saved to netcdf files for analysis.
+'''
+
 import os, sys, warnings
 import gc
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Union
 from datetime import datetime, timedelta
 from scipy import stats
 from netCDF4 import Dataset
@@ -21,7 +27,8 @@ def calculate_climatology(
         days_per_year: int = 366
         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
-    Calculates the climatological mean and standard deviation of ESR from daily ERA5 data.
+    Calculates the climatological mean and standard deviation of evaporative stress ration (ESR) 
+    from daily data.
     Climatological data is calculated for all grid points and for all timestamps in the year.
 
     Inputs:
@@ -66,7 +73,7 @@ def calculate_climatology(
 
     # Remove values that exceed a certain limit as they are likely an error
     esr[esr < 0] = np.nan
-    # esr[esr > 3] = np.nan 
+    esr[esr > 3] = np.nan 
     # print(np.nansum(np.isnan(esr)))
 
     print('Initialized variables, calculation means')
@@ -76,7 +83,7 @@ def calculate_climatology(
         # Get all days in the current date in the loop
         ind = np.where( (date.day == days) & (date.month == months) )[0]
 
-        # Sum over all all ESR in a given day
+        # Sum over all ESR in a given day
         tmp_sum = np.nansum(esr[ind,:,:], axis = 0)
         means[t,:,:] = np.nansum([means[t,:,:], tmp_sum], axis = 0) # np.nansum to account for any NaNs
         N[t] = N[t] + len(ind)
@@ -123,7 +130,7 @@ def calculate_percentile_thresholds(
         days_per_year: int = 366
         ) -> Tuple[np.ndarray, np.ndarray]:
     '''
-    Calculates the the percentile value of a variable from daily ERA5 data.
+    Calculates the the percentile value of a variable from daily data.
     Climatological data is calculated for all grid points and for all timestamps in the year.
 
     Inputs:
@@ -206,7 +213,7 @@ def calculate_sesr(
 
     # Remove values that exceed a certain limit as they are likely an error
     esr[esr < 0] = np.nan
-    # esr[esr > 3] = np.nan
+    esr[esr > 3] = np.nan
     # print(np.nansum(np.isnan(esr)))
 
     # Collect date information
@@ -237,8 +244,8 @@ def calculate_sesr(
 def calculate_fdii(
         smp, 
         dates, 
-        apply_runmean = True, 
-        mask = None
+        apply_runmean: bool = True, 
+        mask: Union[float, np.ndarray] = None
         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
     Calculate the flash drought intensity index (FDII) from a soil moisture percentiles.
@@ -251,9 +258,8 @@ def calculate_fdii(
     
     Inputs:
     :param smp: Soil moisture percentile dataset (np.ndarray with shape time x lat x lon)
-    :param year: Datetime labels for each timestep in smp (np.ndarray of shape time)
+    :param dates: Datetime labels for each timestep in smp (np.ndarray of shape time)
     :param apply_runmean: Apply a centered running mean (length 5) to the percentiles before FDII calculations (recommended for daily data)
-    :param use_mask: Indicates whether to use a land-sea mask to improve computation speed
     :param mask: Land-sea mask with values 1 for land and 0 for sea (np.ndarray with shape lat x lon)
 
     Outputs:
@@ -269,13 +275,17 @@ def calculate_fdii(
     DRO_BASE = 20 # Percentiles must be below the 20th percentile to be in drought
     
     T, I, J = smp.shape
+    
+    # Mask a placeholder mask if not provided
+    if mask is None:
+        mask = np.ones((I, J))
 
     # Make the years, months, and/or days variables
     years = np.array([date.year for date in dates])
     months = np.array([date.month for date in dates])
     days = np.array([date.day for date in dates])
 
-    # Apply a 5 day running mean requested by the user
+    # Apply a 5 day running mean if requested by the user
     if apply_runmean:
         print('Applying 5 day running mean')
         runmean = 5
@@ -284,7 +294,7 @@ def calculate_fdii(
         start_ind = int(np.round((runmean - 1)/2))
         end_ind = int(T + runmean - 1 - start_ind)
 
-        # Apply running mean for each grid point
+        # Apply the running mean for each grid point
         for i in tqdm(range(I), desc = 'Applying running mean'):
             for j in range(J):
                 smp[:,i,j] = np.convolve(smp[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
@@ -303,10 +313,10 @@ def calculate_fdii(
     for i in tqdm(range(I), desc = 'Calculating FD_INT'):
         for j in range(J):
             # Ignore sea points
-            if mask[i,j] == 0: # ERA5 only
+            if mask[i,j] == 0: 
                 continue
         
-            for t in range(T-10): # Note the last two pentads are excluded as there is not enough time for significant SM drop
+            for t in range(T-10): # Note the last two pentads are excluded as that is not enough time for significant SM drop
             
                 obs = np.zeros((9*5)) # Note, the method detailed in Otkin et al. 2021 involves looking ahead 2 to 10 pentads (9 entries total)
                 for nday in np.arange(2*5, 10*5+5, 1):
@@ -335,7 +345,7 @@ def calculate_fdii(
         for j in range(J):
             
             # Ignore sea values
-            if mask[i,j] == 0: # ERA5 only
+            if mask[i,j] == 0:
                 continue
             
             for t in range(1, T-5):
@@ -398,7 +408,7 @@ def calculate_sm_percentiles(
         sm_all, 
         dates, 
         dates_all, 
-        mask = None, 
+        mask: Union[float, np.ndarray] = None, 
         ) -> np.ndarray:
     '''
     Calculate the soil moisture percentiles using a larger popularion of soil moisture data
@@ -418,6 +428,10 @@ def calculate_sm_percentiles(
     '''
         
     T, I, J= sm.shape # Obtain the dataset size to intialize the percentile dataset
+    
+    # Mask a placeholder mask if not provided
+    if mask is None:
+        mask = np.ones((I, J))
     
     # All years in the time series
     all_years = np.unique([date.year for date in dates_all])
@@ -467,18 +481,18 @@ def christian_fd(
         sesr, 
         mask, 
         dates, 
-        start_year = 1990, 
-        end_year = 2020, 
-        apply_runmean = False,
-        years = None, 
-        months = None, 
-        days = None
+        start_year: int = 1990, 
+        end_year: int = 2020, 
+        apply_runmean: bool = False,
+        years: Union[float, np.ndarray] = None, 
+        months: Union[float, np.ndarray] = None, 
+        days: Union[float, np.ndarray] = None
         ) -> np.ndarray:
     '''
     Calculate the flash drought using an updated version of the method described in Christian et al. 2019
     (https://doi.org/10.1175/JHM-D-18-0198.1). This method uses the evaporative stress ratio (SESR) to 
-    identify flash drought. Updates to the method are details (for LSWI) in Christian et al. 2022
-    (https://doi.org/10.1016%2Fj.rsase.2022.100770).
+    identify flash drought. Updates to the method are detailsd in Christian et al. 2023
+    (https://doi.org/10.1038/s43247-023-00826-1).
     
     Inputs:
     :param sesr: Input SESR values, (np.ndarray with shape time x lat x lon)
@@ -519,7 +533,7 @@ def christian_fd(
         start_ind = int(np.round((runmean - 1)/2))
         end_ind = int(T + runmean - 1 - start_ind)
 
-        # Apply running mean for each grid point
+        # Apply the running mean for each grid point
         for i in tqdm(range(I), desc = 'Applying running mean'):
             for j in range(J):
                 sesr[:,i,j] = np.convolve(sesr[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
@@ -548,6 +562,8 @@ def christian_fd(
     print('Applying interpolation and Savitzky-Golay filter to SESR')
     for i in tqdm(range(I), desc = 'Applying SG Filter'):
         for j in range(J):
+        
+        	# Skip masked values if provided
             if mask_provided:
                 if mask[i,j] == 0:
                     continue
@@ -572,8 +588,6 @@ def christian_fd(
     # Reorder SESR back to 3D data
     #sesr_filt = sesr_filt.reshape(T, I, J, order = 'F')
 
-
-
     # Determine the change in SESR
     print('Calculating the change in SESR')
     delta_sesr  = np.ones((T, I, J)) * np.nan
@@ -589,6 +603,7 @@ def christian_fd(
     #sesr_filt = sesr_filt.reshape(T, I*J, order = 'F')
     #delta_sesr = delta_sesr.reshape(T, I*J, order = 'F')
 
+	# Percentile thresholds
     dsesr_percentile = 25
     sesr_percentile  = 20
     
@@ -597,6 +612,8 @@ def christian_fd(
     
     for i in tqdm(range(I), desc = 'Identifying FD'):
         for j in range(J):
+        
+        	# Skip masked values if provided
             if mask_provided:
                 if mask[i,j] == 0:
                     continue
@@ -626,9 +643,10 @@ def christian_fd(
                 else:
                     start_date = dates[-1]
 
-    # Apply the mask
-    for t in range(T):
-        fd[t,:,:] = np.where(mask == 1, fd[t,:,:], np.nan)
+    # Apply the mask if provided
+    if mask_provided:
+        for t in range(T):
+            fd[t,:,:] = np.where(mask == 1, fd[t,:,:], np.nan)
             
     # Re-order the flash drought back into a 3D array
     # fd = fd.reshape(T, I, J, order = 'F')
@@ -652,9 +670,9 @@ def yuan_fd(
     
     Inputs:
     :param smp: Input SM percentiles (np.ndarray with shape time x lat x lon)
-    :param mask: Land-sea mask for the SM percentiles
-    :param dates: Array of datetimes corresponding to the timestamps in smp
-    :param apply_runmean: Apply a centered running mean (length 5) to SESR before FD calculations (recommended for daily data)
+    :param mask: Land-sea mask for the SM percentiles (np.ndarray with shape lat x lon or None)
+    :param dates: Array of datetimes corresponding to the timestamps in smp (np.ndarray with shape time)
+    :param apply_runmean: Apply a centered running mean (length 5) to SM percentiles before FD calculations (recommended for daily data)
     :param years: Array of intergers corresponding to the dates.year. If None, it is made from dates
     :param months: Array of intergers corresponding to the dates.month. If None, it is made from dates
     :param days: Array of intergers corresponding to the dates.day. If None, it is made from dates
@@ -674,6 +692,10 @@ def yuan_fd(
         days = np.array([date.day for date in dates])
         
     T, I, J = smp.shape
+    
+    # Mask a placeholder mask if not provided
+    if mask is None:
+        mask = np.ones((I, J))
 
     # Apply a 5 day running mean requested by the user
     if apply_runmean:
@@ -698,6 +720,7 @@ def yuan_fd(
     for i in tqdm(range(I), desc = 'Determining FD'):
         for j in range(J):
         
+        	# Skip masked values
             if mask[i,j] == 0:
                 continue
             
@@ -789,6 +812,7 @@ def yuan_fd(
 
 
 if __name__ == '__main__':
+    # Create a parser for command line arguments
     description = 'Create indices and perform FD calculates over the African domain'
     parser = ArgumentParser(description = description)
     parser.add_argument('--load_et_and_pet_data', action = 'store_true', help = 'Load in the full set ET and PET data for all layers')
@@ -827,9 +851,10 @@ if __name__ == '__main__':
     with Dataset('%s/%s/aridity_mask.nc'%(base_path, args.model), 'r') as nc:
         mask = nc.variables['aim'][0,:,:]
 
-    # Load all ET, PET
+    # Load all ET and PET data
     if args.load_et_and_pet_data:
         print('Loading ET and PET')
+        # Determine the filename of the datasets
         if args.model == 'era5':
             base_et_fn = 'africa_evaporation'
             base_pet_fn = 'africa_potential_evaporation'
@@ -871,8 +896,9 @@ if __name__ == '__main__':
             # Some issues with GLDAS data clustering around certain values that cause some issues
             et = np.where(et <= 0.000002, np.nan, et)
 
-    
+    # Load SM data
     if args.load_sm_data:
+        # Determine the filenames of the datasets
         if args.model == 'era5':
             base_sm1_fn = 'africa_volumetric_soil_water_layer_1'
             base_sm2_fn = 'africa_volumetric_soil_water_layer_2'
@@ -890,7 +916,7 @@ if __name__ == '__main__':
         sm = {}
         sm[1] = []; sm[2] = []; sm[3] = []; sm[4] = []
         for year in all_years:              
-            # Load SM data
+            # Load the top layer of SM data
             with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm1_fn, year), 'r') as nc:
                 tmp = nc.variables[sname1][:]
 
@@ -900,16 +926,19 @@ if __name__ == '__main__':
 
                 sm[1].append(tmp)
 
+			# Load the second layer of the SM data
             with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm2_fn, year), 'r') as nc:
                 tmp = nc.variables[sname2][:]
 
                 sm[2].append(tmp)
 
+			# Load the third layer of SM data
             with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm3_fn, year), 'r') as nc:
                 tmp = nc.variables[sname3][:]
 
                 sm[3].append(tmp)
 
+			# Load the last layer of SM data
             with Dataset('%s/%s/liquid_vsm/%s_%04d.nc'%(base_path, args.model, base_sm4_fn, year), 'r') as nc:
                 tmp = nc.variables[sname4][:]
 
@@ -934,7 +963,7 @@ if __name__ == '__main__':
 
     # Load SM percentiles
     if args.load_smp_data:
-        # Define the key
+        # Define the key for the nc files
         key = 'rz' if args.level == 0 else args.level
 
         # Initialize lists
@@ -942,7 +971,7 @@ if __name__ == '__main__':
         smp[key] = []
         # smp[1] = []; smp[2] = []; smp[3] = []; smp[4] = []; smp['rz'] = []
         for year in all_years:              
-            # Load SM data
+            # Load SM percentiles data
             with Dataset('%s/%s/soil_moisture_percentiles/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, args.model, str(key), year), 'r') as nc:
                 tmp = nc.variables['smp%s'%str(key)][:]
 
@@ -988,12 +1017,14 @@ if __name__ == '__main__':
     if args.calculate_sesr:
         # Calculate ET and PET climatologies for the 1990 - 2020 30 year period
         print('Calculating climatology')
-        esr_means, esr_stds, one_year = calculate_climatology(et, 
-                                                              pet, 
-                                                              dates, 
-                                                              datetime(1990, 1, 1),
-                                                              datetime(2020, 12, 31),
-                                                              days_per_year = 366)
+        esr_means, esr_stds, one_year = calculate_climatology(
+            et, 
+            pet, 
+            dates, 
+            datetime(1990, 1, 1),
+            datetime(2020, 12, 31),
+            days_per_year = 366,
+        )
         print(one_year)
         # Calculate SESR for each year and save the results
         print('Calculating SESR')
@@ -1005,19 +1036,20 @@ if __name__ == '__main__':
             et_year = et[ind,:,:]; pet_year = pet[ind,:,:]; dates_year = dates[ind]
 
             # Calculate SESR
-            sesr = calculate_sesr(et_year, 
-                                  pet_year, 
-                                  dates_year, 
-                                  esr_means, 
-                                  esr_stds, 
-                                  one_year)
+            sesr = calculate_sesr(
+                et_year, 
+                pet_year, 
+                dates_year, 
+                esr_means, 
+                esr_stds, 
+                one_year,
+            )
             
             # Convert timestamps to a string for saving in .nc file
             time = np.array([date.isoformat() for date in dates_year])
 
             # Save the results
             with Dataset('%s/%s/africa_sesr_%04d.nc'%(base_path, args.model, year), 'w', format = 'NETCDF4') as nc:
-            # with Dataset('../era5/sesr_%04d.nc'%(year), 'w', format = 'NETCDF4') as nc:
                 nc.description = 'Daily %s reanalysis data for SESR over Africa, calculated from evaporation and potential evaporaiton'%args.model.upper()
 
                 # Create Dimensions
@@ -1040,6 +1072,7 @@ if __name__ == '__main__':
                 nc.createVariable('sesr', sesr.dtype, ('time', 'x', 'y'))
                 nc.variables['sesr'][:] = sesr[:]
 
+	# Calculat thresholds
     if args.calculate_thresholds:
         if args.level > 4:
             # Load SESR
@@ -1057,7 +1090,6 @@ if __name__ == '__main__':
                     lat = nc.variables['lat'][:]
                     lon = nc.variables['lon'][:]
 
-                    # Add ET data to the list
                     variable.append(tmp)
             
             # Convert to arrays
@@ -1066,6 +1098,7 @@ if __name__ == '__main__':
             # SM is loaded separately
             key = 'rz' if args.level == 0 else args.level
 
+			# Determine the root zone SM if necessary
             if args.model == 'era5':
                 variable = (7/28) * sm[1] + (21/28) * sm[2] if args.level == 0 else sm[key]
             else:
@@ -1073,12 +1106,14 @@ if __name__ == '__main__':
 
         # Calculate the thresholds
         print('Calculating percentiles')
-        thresholds, one_year = calculate_percentile_thresholds(variable, 
-                                                               40, 
-                                                               dates, 
-                                                               datetime(1990, 1, 1),
-                                                               datetime(2020, 12, 31),
-                                                               days_per_year = 366)
+        thresholds, one_year = calculate_percentile_thresholds(
+            variable, 
+            40, 
+            dates, 
+            datetime(1990, 1, 1),
+            datetime(2020, 12, 31),
+            days_per_year = 366,
+        )
 
         # Save the threshold values
 
@@ -1088,7 +1123,6 @@ if __name__ == '__main__':
         # Save the results
         var_name = 'sesr' if args.level > 4 else 'swvl%s'%key
         with Dataset('%s/%s/africa_%s_40_percent_thresh.nc'%(base_path, args.model, var_name), 'w', format = 'NETCDF4') as nc:
-        # with Dataset('../era5/sesr_%04d.nc'%(year), 'w', format = 'NETCDF4') as nc:
             nc.description = 'Daily %s reanalysis data for the 40th percentile value of %s over Africa'%(args.model.upper(), var_name)
 
             # Create Dimensions
@@ -1119,7 +1153,7 @@ if __name__ == '__main__':
         # Initialize lists
         sesr = []
         for year in all_years:
-            # Load ET data
+            # Load SESR data
             with Dataset('%s/%s/fd_indices/africa_sesr_%04d.nc'%(base_path, args.model, year), 'r') as nc:
                 tmp = nc.variables['sesr'][:]
 
@@ -1135,12 +1169,14 @@ if __name__ == '__main__':
         
         # Calculate FD via evaporative stress
         print('Calculating FD')
-        fd = christian_fd(sesr, 
-                          mask, 
-                          dates, 
-                          start_year = 1990, 
-                          end_year = 2020, 
-                          apply_runmean = True)
+        fd = christian_fd(
+            sesr, 
+            mask, 
+            dates, 
+            start_year = 1990, 
+            end_year = 2020, 
+            apply_runmean = True,
+        )
         
         # Save FD results for for each year
         for year in all_years:
@@ -1179,7 +1215,7 @@ if __name__ == '__main__':
 
     # Calculate SM percentiles and save the results
     if args.calculate_sm_percentiles:
-        # Create one layer for 0 - 28 cm (root zone SM)
+        # Create one layer for 0 - 28 cm (ERA5) or 0 - 40 cm (GLDAS) (root zone SM)
         if args.model == 'era5':
             sm['rz'] = (7/28) * sm[1] + (21/28) * sm[2] # Weighted average based on depth of each soil layer
         else:
@@ -1207,11 +1243,13 @@ if __name__ == '__main__':
                     continue
 
                 # Calculate the SM percentiles
-                smp = calculate_sm_percentiles(sm_year[key], 
-                                               sm[key], 
-                                               dates_year, 
-                                               dates, 
-                                               mask = mask)
+                smp = calculate_sm_percentiles(
+                    sm_year[key], 
+                    sm[key], 
+                    dates_year, 
+                    dates, 
+                    mask = mask,
+                )
                 
                 # Save the results
                 with Dataset('%s/%s/africa_soil_moisture_percentiles_%s_%04d.nc'%(base_path, args.model, str(key), year), 'w', format = 'NETCDF4') as nc:
@@ -1251,16 +1289,15 @@ if __name__ == '__main__':
 
     # Calculate the FDII for each layer
     if args.calculate_fdii:
-        #keys = [1, 2, 3, 4, 'rz']
         key = 'rz' if args.level == 0 else args.level
 
-        # # Calculate the FDII for each layer
-        # for key in keys:
         # Calculate the FDII and its components
-        fdii, fd_int, dro_sev = calculate_fdii(smp[key],
-                                               dates, 
-                                               apply_runmean = True,
-                                               mask = mask)
+        fdii, fd_int, dro_sev = calculate_fdii(
+            smp[key],
+            dates, 
+            apply_runmean = True,
+            mask = mask,
+        )
 
         # Save the FDII results for each year
         for year in all_years:
@@ -1317,16 +1354,15 @@ if __name__ == '__main__':
 
     # Calculate Yuan et al FD and save the results
     if args.calculate_fd_yuan:
-        # keys = [1, 2, 3, 4, 'rz']
         key = 'rz' if args.level == 0 else args.level
 
-        # # identify the FD for each layer
-        # for key in keys:
         # Calculate the FDII and its components
-        fd = yuan_fd(smp[key],
-                     mask, 
-                     dates, 
-                     apply_runmean = True)
+        fd = yuan_fd(
+            smp[key],
+            mask, 
+            dates, 
+            apply_runmean = True,
+        )
 
         # Save the FDII results for each year
         for year in all_years:

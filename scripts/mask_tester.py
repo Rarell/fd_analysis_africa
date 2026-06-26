@@ -1,3 +1,8 @@
+'''Load in an subset the aridity mask 
+from the GLDAS and subset to the African
+domain, and plot to ensure its correctness
+'''
+
 import numpy as np
 from typing import Tuple
 import matplotlib.pyplot as plt
@@ -23,13 +28,14 @@ if __name__ == '__main__':
     path = '../../gldas'
     fn = 'aridity_mask.nc'
 
+    # Load the full aridity mask from the GLDAS 
     with Dataset('%s/%s'%(path, fn), 'r') as nc:
         desc = nc.description
         lat = nc.variables['latitude'][:]
         lon = nc.variables['longitude'][:]
         mask = nc.variables['aim'][:]
 
-    # Subset the mask
+    # Subset the mask to Africa
     lon = np.where(lon < 0, lon + 360, lon)
     mask_sub, lat_sub, lon_sub = subset_data(mask, lat, lon, subset = 'africa')
     T, I, J = mask_sub.shape
@@ -37,7 +43,7 @@ if __name__ == '__main__':
     # Make the lat and lon 2D
     lon_sub, lat_sub = np.meshgrid(lon_sub, lat_sub)
 
-    # Write the subset
+    # Write the subsetted mask
     # with Dataset('../data/gldas/aridity_mask.nc', 'w', format = 'NETCDF4') as nc:
     #     # Write a description for the .nc file
     #     nc.description = desc
@@ -86,8 +92,10 @@ if __name__ == '__main__':
     ax.coastlines(edgecolor = 'black', zorder = 3)
     ax.add_feature(cfeature.BORDERS, facecolor = 'none', edgecolor = 'black', zorder = 3)
 
+    # Plot the mask
     ax.pcolormesh(lon_sub, lat_sub, mask_sub[0,:,:], vmin = 0, vmax = 1, transform = proj, zorder = 1)
 
+    # Adjust the tick labels
     ax.set_yticklabels(LatLabel, fontsize = 26)
     ax.yaxis.set_major_formatter(LatFormatter)
     

@@ -1,8 +1,11 @@
+'''Perform analysis of flash drought over Africa
+'''
+
 import os, sys, warnings
 import gc
 import numpy as np
 import multiprocessing as mp
-from typing import Tuple
+from typing import Tuple, Union, Dict
 from datetime import datetime, timedelta
 from scipy import stats
 from netCDF4 import Dataset
@@ -15,11 +18,35 @@ from inputs_and_outputs import load_fd_one_year, load_index_one_year, load_raw_d
 from make_figures import make_statistics_maps, make_boxplots, make_barplots, make_variable_boxplots, create_regional_boxes, make_trend_maps, timeseries_plot, make_correlation_maps, make_lagged_correlation_plot, make_scatterplots, make_errorbar_plot, make_eof_plot, create_single_map
 from utils import subset_data, standardize_variable, calculate_spi
 
+# Ignore warnings
 warnings.filterwarnings('ignore')
 
-def calculate_fd_characteristics(timeseries, index_ts, dates, mask, thresholds, j, fdii = False):
+def calculate_fd_characteristics(
+        timeseries, 
+        index_ts, 
+        dates, 
+        mask, 
+        thresholds, 
+        j, 
+        fdii: bool = False
+        ) -> Tuple[int, float, float, int]:
     '''
-    Calculate the frequency and duration
+    Calculate characteristics of FD (that is, frequency, duration, and severity)
+    
+    Inputs:
+    :param timeseries: Timeseries of FD labels (np.ndarray with shape time)
+    :param index_ts: Timeseries of the FD index used to identify FD (np.ndarray with shape time)
+    :param dates: Array of datetime labels for each step in timeseries
+    :param mask: Mask value of 0 (skip calculations) or 1 (perform calculations)
+    :param thresholds: Array of thresholds 40 percentile thresholds (for calculating severity)
+    :param j: Index value for proper grid placement in multiprocessing
+    :param fdii: Bool indicating if FDII based FD is examined (determines severity calculations)
+    
+    Outputs:
+    :param frequency: Total number of FD events in timeseries
+    :param duration: Average duration of FD events in time series
+    :param severity: Average severity of FD events in time series
+    :param j: Index value for proper grid placement in multiprocessing
     '''
     # Make the months and days
     months = np.array([date.month for date in dates])
@@ -36,12 +63,13 @@ def calculate_fd_characteristics(timeseries, index_ts, dates, mask, thresholds, 
 
     # T, I, J = fd.shape
 
-    # Initialize duration
+    # Initialize duration and severity
     duration = []
     severity = []
     duration_count = 0
     severity_count = 0
 
+	# If masked, skip calculations (primarily for sea grids)
     if mask == 0:
         return np.nan, np.nan, np.nan, j
     
@@ -65,6 +93,7 @@ def calculate_fd_characteristics(timeseries, index_ts, dates, mask, thresholds, 
             # When calculating duration, also get the severity 
             if fdii:
                 # For FDII, severity is just the accumulation of FDII values
+                # Multiply FDII by -1 for conformity with other indices (lower values mean more severe FD)
                 severity_count = severity_count + ((-1) * timeseries[t])
             else:
                 # Determine severity by calculating the decifit from the 40th percentile
@@ -94,8 +123,6 @@ def calculate_fd_characteristics(timeseries, index_ts, dates, mask, thresholds, 
 
     # Determine the average duration
     duration = np.nanmean(duration)
-    # duration = duration if duration < 100 else np.nan # Deal with some strange and erroroneous 
-                                                      # behavior of a few pixels in the Congo Basin
     
     # Determine the average severity
     severity = np.nanmean(severity)
@@ -104,15 +131,28 @@ def calculate_fd_characteristics(timeseries, index_ts, dates, mask, thresholds, 
 
     return frequency, duration, severity, j
 
-def determine_fd_starttimes(fd, dates, j):
+def determine_fd_starttimes(fd, dates, j) -> Tuple[list, list, int]:
     '''
     Determine the start times of FD in a given time series
+    
+    Inputs:
+    :param fd: Timeseries of FD labels (np.ndarray with shape time)
+    :param dates: Array of datetime labels for each step in fd
+    :param j: Index value for proper grid placement in multiprocessing
+    
+    Outputs:
+    :param start_times: List of datetimes labeling when FD starts
+    :param start_times_ind: List of indices in FD of when FD starts
+    :param j: Index value for proper grid placement in multiprocessing
     '''
 
+	# Initialize lists
     active_fd = False
     start_times = []
     start_times_ind = []
+    
     for t in range(len(dates)):
+        # If FD occurs and it is not ongoing, add the current date to the start times
         if (fd[t] > 0) & (active_fd == False):
             # Note FD has occurred
             active_fd = True
@@ -129,20 +169,49 @@ def determine_fd_starttimes(fd, dates, j):
 
     return start_times, start_times_ind, j
 
-def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, times = 'all', return_fd_and_indices = False):
+def calculate_fd_statistics(
+        args, 
+        fn_base, 
+        sname, 
+        index_base, 
+        ind_sname, 
+        mask, 
+        times: str = 'all', 
+        return_fd_and_indices = False
+        ) -> Union[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     '''
     Calculate FD climatology statistics (frequency, severity, duration)
+    
+    Inputs:
+    :param args: Dictionary of command line arguments. Uses --data_path, --model, and --nprocesses
+    :param fn_base: Base filename of FD label data
+    :param index_base: Base filename of FD index data
+    :param ind_sname: Dictionary keys (of .nc files) for index data
+    :param mask: Array of mask values (zero = 0 skip, 1 = keep)
+    :param times: List of times (annual, MAMJJA, SONDJF) that indicates what months to incorporate in calculations
+    :param return_fd_and_indices: Bool. If true, stop at FD labels and indices and return these
+    
+    Outputs:
+    if return_fd_and_indices:
+        :param fd_total: Array of labeled FD (np.ndarray with shape time x lat x lon)
+        :param index_total (or fd_total if FDII is examined): Array of FD index values (np.ndarray with shape time x lat x lon)
+    else:
+        :param frequency: Array of total frequency of FD events (np.ndarray with shape lat x lon)
+        :param duration: Array of time averaged duration of FD events (np.ndarray with shape lat x lon)
+        :param severity: Array of time averaged severity of FD events (np.ndarray with shape lat x lon)
     '''
 
-    # Find all the files for the identified FD
+    # Find all the files with the identified FD
     fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
     # print(fd_files)
 
-    # Find all index files for severity
+    # Find all index files for severity calculations
     index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
     index_files = np.sort(index_files)
 
+    # If ind_sname is None, then either FDII and/or root zone SM is being examined.
+    # If RZSM is examined, collect all the layer 1 and 2 SM files for RZSM calculations
     if ind_sname is not None:
         if 'rz' in index_base:
             sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
@@ -152,11 +221,11 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
             index_files_1 = np.sort(index_files_1)
             index_files_2 = np.sort(index_files_2)
 
-    # Load an FD file to initialize the frequency and duration datasets
+    # Load an FD file to initialize the characteristics datasets
     with Dataset(fd_files[0], 'r') as nc:
         fd = nc.variables[sname][:]
 
-    # Initialize FD frequency data (total FDs in dataset; starts count at 0)
+    # Initialize FD characteristics
     _, I, J = fd.shape
     frequency = np.zeros((I, J))
     duration = np.zeros((I, J))
@@ -173,19 +242,23 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
         T, _, _ = fd.shape
 
         # Add to the time set of FD and timestamp data
-        # print(np.nansum(fd > 0))
         fd_total.append(fd.astype(np.float32))
         time.append(dates)
 
         # Load one year of data of the appropiate index
         if ind_sname is not None:
+            # Correct the sname/dictionary key if necessary
             if (args.model == 'gldas') & ('swvl' in ind_sname):
                 ind_sname = 'soilm'
+                
+            # For RZSM, combine the two filenames and snames/dictionary keys for the RZSM calculations
             if 'rz' in index_base:
                 index_files_combined = [index_files_1[t], index_files_2[t]]
                 ind_snames = ['swvl1', 'swvl2'] if args.model == 'era5' else ['soilm', 'soilm']
+                # Load RZSM for 1 year
                 index_data = load_index_one_year(index_files_combined, ind_snames, index_base, times = times, I = I, J = J)
             else:
+                # Load the FD index for 1 year
                 index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, I = I, J = J)
         else:
             # Placeholder so index_total can still be called when using FDII without 
@@ -193,9 +266,9 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
             index_data = np.zeros((1, I, J)) * np.nan 
 
         # Add to the total set of index data
-        # print(np.nansum(fd > 0))
         index_total.append(index_data.astype(np.float32))
 
+	# Convert the total FD and FD index to np arrrays with shape time x lat x lon
     fd_total = np.concatenate(fd_total, axis = 0)
     time = np.concatenate(time)
 
@@ -206,22 +279,25 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
         # significant code changes or further bloating the params argument
         index_total = np.zeros((1, I, J)) * np.nan 
 
+	# Return the FD labels and indices if desired
     if return_fd_and_indices:
         if ind_sname is not None:
             return fd_total, index_total
         else: # FDII is the index
             return fd_total, fd_total
 
-    # Calculate the duration and frequency
+    # Calculate the FD characteristics
     for i in tqdm(range(I), desc = 'Calculating FD statistics'):
+        # Use multiprocesses if specified
         if args.nprocesses > 1:
-            # Collect the arguments needed for to load and process 1 year of data
+            # Collect the arguments needed perform FD characteristics calculations
             params = [(fd_total[:,i,j], index_total[:,i,j], time, mask[i,j], None, j, False if ind_sname is not None else True) for j in range(J)]
 
-            # Use multiprocessing to load and process data; when joined, sum all the pieces
+            # Use multiprocessing to load and process data
             with mp.Pool(args.nprocesses) as pool:
-                data = pool.starmap(calculate_fd_characteristics, params) # Load and process data
+                data = pool.starmap(calculate_fd_characteristics, params) # Perform calculation
                 
+                # Collect calculated values and place them in the correct spot
                 for datum in data:
                     freq = datum[0]; dur = datum[1]; sev = datum[2]; j = datum[3]
 
@@ -230,22 +306,19 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
                     severity[i,j] = sev
 
         else:
+            # If not using multiprocessing, use a loop to calculate each characteristic one grid point at a time
             for j in range(J):
-                frequency[i,j], duration[i,j], severity[i,j], _ = calculate_fd_characteristics(fd_total[:,i,j], 
-                                                                                          index_total[:,i,j], 
-                                                                                          time, 
-                                                                                          mask[i,j],
-                                                                                          None,
-                                                                                          j,
-                                                                                          False if ind_sname is not None else True)
+                frequency[i,j], duration[i,j], severity[i,j], _ = calculate_fd_characteristics(
+                    fd_total[:,i,j], 
+                    index_total[:,i,j], 
+                    time, 
+                    mask[i,j],
+                    None,
+                    j,
+                    False if ind_sname is not None else True,
+                )
 
-        # for t in range(1, T): # Start from t = 1; t = 0 is assumed to have no FD at the start of data
-        #     FD_occurence = np.where( (fd[t,:,:] > 0) & np.invert(fd[t-1,:,:] > 0), 1, 0)
-        #     # Find all points where FD was recorded, but where the previous time step had no FD
-        #     # This should make it so multiple FD events are not counted multiple times 
-        #     frequency = frequency + FD_occurence
-    # print(np.nanmin(frequency), np.nanmax(frequency), np.nanmean(frequency))
-    # print(np.nanmin(duration), np.nanmax(duration), np.nanmean(duration))
+	# NaN 0 values to cleaner figure plotting
     frequency[frequency == 0] = np.nan
     duration[duration == 0] = np.nan
     severity[severity == 0] = np.nan
@@ -253,12 +326,36 @@ def calculate_fd_statistics(args, fn_base, sname, index_base, ind_sname, mask, t
     return frequency, duration, severity
 
 
-def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname, mask, fd_type = None, times = 'all'):
+def calculate_fd_statistics_by_year(
+        args, 
+        fn_base, 
+        sname, 
+        index_base, 
+        ind_sname, 
+        mask, 
+        fd_type: Union[float, str] = None, 
+        times: str = 'all',
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
-    Calculate FD climatology statistics (frequency, severity, duration) for each year
+    Calculate FD climatology statistics (frequency, severity, duration) for each year individually
+    
+    Inputs:
+    :param args: Dictionary of command line arguments. Uses --level, --data_path, --model, and --nprocesses
+    :param fn_base: Base filename of FD label data
+    :param index_base: Base filename of FD index data
+    :param ind_sname: Dictionary keys (of .nc files) for index data
+    :param mask: Array of mask values (zero = 0 skip, 1 = keep)
+    :param fd_type: Type of FD being examined (sesr, rzsm, or fdii)
+    :param times: List of times (annual, MAMJJA, SONDJF) that indicates what months to incorporate in calculations
+    
+    Outputs:
+    :param frequency: Array of total frequency of FD events (np.ndarray with shape n_years x lat x lon)
+    :param duration: Array of time averaged duration of FD events (np.ndarray with shape n_years x lat x lon)
+    :param severity: Array of time averaged severity of FD events (np.ndarray with shape x_years x lat x lon)
     '''
 
-    # Determine if the calculations has already been done
+    # Determine if the calculations has already been done and saved
+    # If they are done, load the data and return the values
     level = 'rz' if args.level == 0 else str(args.level)
     filename = '%s_fd_characteristics_by_year_%s_level_%s.pkl'%(fd_type, times, level)
     if os.path.exists('%s/%s/%s'%(args.data_path, args.model, filename)):
@@ -275,6 +372,8 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
     index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
     index_files = np.sort(index_files)
 
+	# If ind_sname is None, then either FDII and/or root zone SM is being examined.
+    # If RZSM is examined, collect all the layer 1 and 2 SM files for RZSM calculations
     if ('rz' in fn_base) & (index_base is not None):
         sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
         sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
@@ -283,7 +382,7 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
         index_files_1 = np.sort(index_files_1)
         index_files_2 = np.sort(index_files_2)
 
-    # Load an FD file to initialize the frequency and duration datasets
+    # Load an FD file to initialize the characteristic datasets
     with Dataset(fd_files[0], 'r') as nc:
         fd = nc.variables[sname][:]
 
@@ -309,13 +408,18 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
 
         # Load one year of data of the appropiate index
         if ind_sname is not None:
+            # Correct the sname/dictionary key if necessary
             if (args.model == 'gldas') & ('swvl' in ind_sname):
                 ind_sname = 'soilm'
+                
+            # For RZSM, combine the two filenames and snames/dictionary keys for the RZSM calculations
             if 'rz' in index_base:
                 index_files_combined = [index_files_1[t], index_files_2[t]]
                 ind_snames = ['swvl1', 'swvl2'] if args.model == 'era5' else ['soilm', 'soilm']
+                # Load RZSM for 1 year
                 index_data = load_index_one_year(index_files_combined, ind_snames, index_base, times = times, I = I, J = J)
             else:
+                # Load the FD index for 1 year
                 index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, I = I, J = J)
         else:
             # Placeholder so index_total can still be called when using FDII without 
@@ -323,15 +427,18 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
             index_data = np.zeros((1, I, J)) * np.nan 
             thresholds = np.zeros((1, I, J)) * np.nan 
 
+		# Calculate FD characteristics for 1 year
         for i in range(I):
+            # Use multiprocesses if specified
             if args.nprocesses > 1:
-                # Collect the arguments needed for to load and process 1 year of data
+                # Collect the arguments needed for to process 1 year of data
                 params = [(fd[:,i,j], index_data[:,i,j], dates, mask[i,j], thresholds[:,i,j], j, False if ind_sname is not None else True) for j in range(J)]
 
-                # Use multiprocessing to load and process data; when joined, sum all the pieces
+                # Use multiprocessing to process data
                 with mp.Pool(args.nprocesses) as pool:
-                    data = pool.starmap(calculate_fd_characteristics, params) # Load and process data
+                    data = pool.starmap(calculate_fd_characteristics, params) # Process data
                     
+                    # Collect calculated values and place them in the correct spot
                     for datum in data:
                         freq = datum[0]; dur = datum[1]; sev = datum[2]; j = datum[3]
 
@@ -340,41 +447,59 @@ def calculate_fd_statistics_by_year(args, fn_base, sname, index_base, ind_sname,
                         severity[t,i,j] = sev
 
             else:
+                # If not using multiprocessing, use a loop to calculate each characteristic one grid point at a time
                 for j in range(J):
-                    frequency[t,i,j], duration[t,i,j], severity[t,i,j], _ = calculate_fd_statistics(fd[:,i,j], 
-                                                                                                    index_data[:,i,j], 
-                                                                                                    dates, 
-                                                                                                    mask[i,j],
-                                                                                                    thresholds[:,i,j],
-                                                                                                    j,
-                                                                                                    fdii = False if ind_sname is not None else True,)
+                    frequency[t,i,j], duration[t,i,j], severity[t,i,j], _ = calculate_fd_statistics(
+                        fd[:,i,j], 
+                        index_data[:,i,j], 
+                        dates, 
+                        mask[i,j],
+                        thresholds[:,i,j],
+                        j,
+                        fdii = False if ind_sname is not None else True,
+                    )
 
-        # for t in range(1, T): # Start from t = 1; t = 0 is assumed to have no FD at the start of data
-        #     FD_occurence = np.where( (fd[t,:,:] > 0) & np.invert(fd[t-1,:,:] > 0), 1, 0)
-        #     # Find all points where FD was recorded, but where the previous time step had no FD
-        #     # This should make it so multiple FD events are not counted multiple times 
-        #     frequency = frequency + FD_occurence
-    # print(np.nanmin(frequency), np.nanmax(frequency), np.nanmean(frequency))
-    # print(np.nanmin(duration), np.nanmax(duration), np.nanmean(duration))
+	# NaN 0 values to cleaner figure plotting and trend analysis
     time = np.concatenate(time)
     frequency[frequency == 0] = np.nan
     duration[duration == 0] = np.nan
     severity[severity == 0] = np.nan
 
-    # Save results to pickle file so the calculations don't need to be repeated
+    # Save results to a pickle file so the calculations don't need to be repeated
     save_pickle('%s/%s/%s'%(args.data_path, args.model, filename), [frequency, duration, severity], ['freq', 'dur', 'sev'])
         
     return frequency, duration, severity
 
-def load_start_times(args, fn_base, sname, lat = None, lon = None, region = 'none'):
+def load_start_times(
+        args, 
+        fn_base, 
+        sname, 
+        lat: Union[float, np.ndarray] = None, 
+        lon: Union[float, np.ndarray] = None, 
+        region: Union[float, str] = 'none',
+        ) -> Tuple[Dict[str, list], Dict[str, list]]:
     '''
     Determine the start dates of flash drought for a given method
+    
+    Inputs:
+    :param args: Dictionary of command line arguments. Uses --data_path, --model, and --nprocesses
+    :param fn_base: Base filename of FD label data
+    :param sname: The short name/dictionary key (of .nc files) of the FD data
+    :param lat, lon: Latitude and longitudes of the dataset (for subsetting; np.ndarray with shape lat and lon respectively)
+    :param region: Name of a subregion to subset to
+    
+    Outputs:
+    :param fd_start_times: Dictionary with keys corresponding to spatial indices where FD start times are; 
+                           each item is a list of datetime labels indicating when FD began
+    :param fd_start_times_ind: Dictionary with keys corresponding to spatial indices where FD start times are; 
+                               each item is a list of timeseries indices indicating when FD began in the grid's timeseries
     '''
 
     # Find all the files for the identified FD
     fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
 
+	# Load FD data
     fd_total = []
     time = []
 
@@ -387,29 +512,33 @@ def load_start_times(args, fn_base, sname, lat = None, lon = None, region = 'non
         fd_total.append(fd)
         time.append(dates)
 
+	# Convert data to np array
     fd_total = np.concatenate(fd_total, axis = 0)
     time = np.concatenate(time)
 
     # Subset if necessary
-    if np.invert(region == 'none'):
+    if np.invert(region == 'none') | (region is None):
         fd_total, _, _ = subset_data(fd_total, lat, lon, subset = region)
     
+    # Initialize the start times
     T, I, J = fd_total.shape
     fd_total = fd_total.reshape(T, I*J)
     
     fd_start_times = {}
     fd_start_times_ind = {}
 
-    # Calculate the duration and frequency
+ 	# Determine the start times of FD for each grid point
 
+	# Use multiprocesses if specified
     if args.nprocesses > 1:
-        # Collect the arguments needed for to load and process 1 year of data
+        # Collect the arguments needed to process the data
         params = [(fd_total[:,ij], time, ij) for ij in range(I*J)]
 
-        # Use multiprocessing to load and process data; when joined, sum all the pieces
+        # Use multiprocessing to process the data;
         with mp.Pool(args.nprocesses) as pool:
-            data = pool.starmap(determine_fd_starttimes, params) # Load and process data
+            data = pool.starmap(determine_fd_starttimes, params) # Determine FD start times
             
+            # Collect start times and place them in the dictionary items
             for datum in data:
                 start_times = datum[0]; start_times_ind = datum[1]; ij = datum[2]
 
@@ -417,6 +546,7 @@ def load_start_times(args, fn_base, sname, lat = None, lon = None, region = 'non
                 fd_start_times_ind[ij] = start_times_ind
 
     else:
+        # If not using multiprocessing, use a loop to calculate each start times one grid point at a time
         for ij in tqdm(range(I*J), desc = 'Calculating FD start times'):
             start_times, start_times_ind, _ = determine_fd_starttimes(fd_total[:,ij], time, ij)
             fd_start_times[ij] = start_times
@@ -424,9 +554,18 @@ def load_start_times(args, fn_base, sname, lat = None, lon = None, region = 'non
 
     return fd_start_times, fd_start_times_ind
 
-def trend_analysis(x, y):
+def trend_analysis(x, y) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray], Union[float, np.ndarray]]:
     '''
     Perform a linear regression and significance test between two variables (assumed x is 1D)
+    
+    Inputs:
+    :param x: x values used to predict y (assumed to be a time series)
+    :param y: Values to predict (assumed be a time series np.ndarray with shape time x lat x lon)
+    
+    Outputs:
+    :param slope: Slopes of the linear regression (float or np.ndarray with shape lat x lon)
+    :param intercept: Intercepts of the linear regression (float or np.ndarray with shape lat x lon)
+    :param pval: P-values of the slopes of the linear regression (float or np.ndarray with shape lat x lon)
     '''
 
     # Reshape y to 2D if needed
@@ -443,12 +582,35 @@ def trend_analysis(x, y):
     # Reshape if necessary
     if len(y.shape) > 1:
         slope = slope.reshape(I, J)
+        intercept = intercept.reshape(I, J)
         pval = pval.reshape(I, J)
 
     return slope, intercept, pval
 
 
-def eof_analysis(args, fd_idx, mask, lat, lon, times, lon_ind, var_sname):
+def eof_analysis(
+        args, 
+        fd_idx, 
+        mask, 
+        lat, 
+        lon, 
+        times, 
+        lon_ind, 
+        var_sname
+        ) -> None:
+    '''
+    Perform an Empirical Orthogonal Function (EOF) analysis of a variable and make a plot of the leading modes
+    
+    :param args: Dictionary of command line arguments. Uses --model and --figure_path
+    :param fd_idx: The FD index the analysis is conducted on (np.ndarray with shape time x lat x lon)
+    :param mask: Array of mask values (zero = 0 skip, 1 = keep) 
+    :param lat, lon: Latitude and longitude values of fd_idx (np.ndarrays with shape lat x lon)
+    :param times: Array of datetime labels for the time axis in fd_idx (np.ndarray with shape time)
+    :param lon_ind: Set of indices in longitude used for correcting ERA5 results
+    :param var_sname: Short name of the variable being examined
+    '''
+    
+    # Reshape dataset into time x space for the analysis
     T, I, J = fd_idx.shape
     fd_idx = fd_idx.reshape(T, I*J).astype(np.float32)
     mask2d = mask.reshape(I*J)
@@ -502,7 +664,7 @@ def eof_analysis(args, fd_idx, mask, lat, lon, times, lon_ind, var_sname):
                 k = k + 1
         regress_map = regress_map.reshape(I, J)
 
-        # Correct longitude issues
+        # Correct longitude issues for ERA5
         if args.model == 'era5':
             tmp = regress_map[:,lon_ind]
             regress_map = np.concatenate([tmp, regress_map[:,:lon_ind[0]]], axis = -1)
@@ -511,24 +673,34 @@ def eof_analysis(args, fd_idx, mask, lat, lon, times, lon_ind, var_sname):
         runmean = 90
         PCs[1:,mode-1] = np.convolve(PCs[1:,mode-1], np.ones((runmean))/runmean)[(runmean-1):]
 
-        make_eof_plot(regress_map, 
-                        lat, 
-                        lon, 
-                        PCs[1:,mode-1], 
-                        times, 
-                        var_sname, 
-                        mode, 
-                        var_explained[mode-1], 
-                        path = '%s/%s'%(args.figure_path, args.model), 
-                        savename = savename)
+		# Make the plot
+        make_eof_plot(
+            regress_map, 
+            lat, 
+            lon, 
+            PCs[1:,mode-1], 
+            times, 
+            var_sname, 
+            mode, 
+            var_explained[mode-1], 
+            path = '%s/%s'%(args.figure_path, args.model), 
+            savename = savename)
 
-    # Significance plots
+    # Make significance plots
     N = eigval.size
     # Possible title: Eigen Value for Each Mode with Standard Error
     delta_lambda = eigval * np.sqrt(2/N)
     modes = np.arange(1, 15+1)
     savename = '%s_eigen_confidence_interval.png'%var_sname
-    make_errorbar_plot(modes, eigval[:15], delta_lambda[:15], 'Modes', 'Eigen Values', path = '%s/%s'%(args.figure_path, args.model), savename = savename)
+    make_errorbar_plot(
+        modes, 
+        eigval[:15], 
+        delta_lambda[:15], 
+        'Modes', 
+        'Eigen Values', 
+        path = '%s/%s'%(args.figure_path, args.model), 
+        savename = savename,
+    )
 
     # Remove larger files to free up space for next analysis
     del fd_idx, PCs, EOFs, sig, eigval, delta_lambda, regress_patterns
@@ -537,7 +709,7 @@ def eof_analysis(args, fd_idx, mask, lat, lon, times, lon_ind, var_sname):
 
 if __name__ == '__main__':
     # Create a parser to parse and process command line inputs
-    description = 'Analysis ERA5 FD results over Africa'
+    description = 'Analysis FD results over Africa'
     parser = ArgumentParser(description=description, fromfile_prefix_chars='@')
 
     # Pathing information
@@ -551,11 +723,13 @@ if __name__ == '__main__':
     parser.add_argument('--fd_scatterplots', action = 'store_true', help = 'Make scatter plots of FD/indices compared with each other')
     parser.add_argument('--make_region_map', action = 'store_true', help = 'Make a map showing the different regions investigated')
 
+	# Skipping certain parts of the sensitivity analysis (best to only perform one at a time)
     parser.add_argument('--skip_variable_boxplots', action = 'store_false', help = 'Skip making the variable anomaly boxplots in the sensitivity analysis')
     parser.add_argument('--skip_correlation_plots', action = 'store_false', help = 'Skip the correlation analysis in the sensitivity analysis')
     parser.add_argument('--skip_energy_moisture_drivers', action = 'store_false', help = 'Skip the moisture/energy limited analysis')
     parser.add_argument('--skip_eof_analysis', action = 'store_false', help = 'Skip the EOF analysis for driving variables')
 
+	# High level information
     parser.add_argument('--em_lag_days', type = int, default = 0, help = 'Number of days before FD to examine SPI and PET for energy and moisture (EM) drivers')
     parser.add_argument('--model', type = str, default = 'era5', help = 'Type of reanalysis data examined (era5 or gldas)')
     parser.add_argument('--level', type = int, default = 0, help = 'Soil moisture level (must be 0 - 4; 0 means root zone depth)')
@@ -570,6 +744,7 @@ if __name__ == '__main__':
     # Define the soil moisture level:
     level = 'rz' if args.level == 0 else str(args.level)
 
+	# Some extra description is needed for GLDAS data
     if args.model == 'gldas':
         if args.level == 0:
             level_desc = 'rz'
@@ -609,15 +784,18 @@ if __name__ == '__main__':
         lat = nc.variables['lat'][:]
         lon = nc.variables['lon'][:]
 
-    # Load the mask
+    # Load the aridity mask
     with Dataset('%s/%s/aridity_mask.nc'%(args.data_path, args.model), 'r') as nc:
         mask = nc.variables['aim'][0,:,:]
 
+	# For ERA5, there is a plotting error where longitude cross 0 degrees because of how
+	# the dataset is ordered; correct this
     if args.model == 'era5':
         lon_ind = np.where(lon[0,:] > 330)[0]
         lon_tmp = lon[:,lon_ind]
         lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
 
+		# For ERA5, latitudes are in reverse order to normal; correct for plotting
         sub_lat = lat[::-1,0]
     else:
         sub_lat = lat[:,0]
@@ -626,13 +804,15 @@ if __name__ == '__main__':
     if np.invert(args.region == 'none'):
             mask, _, _ = subset_data(mask, sub_lat, lon[0,:], subset = args.region)
 
+	# Determine the subregion to examine if any
     region = '' if args.region == 'none' else '_%s'%args.region
 
+	# Define which variables are climate indices
     climate_indices = ['enso', 'iod', 'mjo']
 
-    # Make figures for FD statistics if desired
+    # Make figures for FD characteristics if desired
     if args.fd_stats_analysis:
-        # Perform calculations for each type of FD identified
+        # Perform calculations for each type of FD identified and for "summer" months (MAMJJA) and "winter" months (SONDJF)
         frequency = []
         severity = []
         duration = []
@@ -645,12 +825,21 @@ if __name__ == '__main__':
         severity_win = []
         duration_win = []
 
+		# Characteristics are calculated one FD type at a time
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
             print(fd_type)
 
-            # Perform FD statistics calculations for the full year
-            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask)
+            # Perform FD statistics calculations for the full dataset
+            freq, dur, sev = calculate_fd_statistics(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask,
+            )
 
+			# Longitude corrections for ERA5
             if args.model == 'era5':
 
                 tmp = freq[:,lon_ind]
@@ -667,8 +856,17 @@ if __name__ == '__main__':
             severity.append(sev)
 
             # Perform FD statistics calculations for the "summer"
-            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask , times = 'summer')
+            freq, dur, sev = calculate_fd_statistics(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask, 
+                times = 'summer',
+            )
 
+			# Longitude corrections for ERA5
             if args.model == 'era5':
 
                 tmp = freq[:,lon_ind]
@@ -685,8 +883,17 @@ if __name__ == '__main__':
             severity_sum.append(sev)
 
             # Perform FD statistics calculations for the "winter"
-            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, times = 'winter')
+            freq, dur, sev = calculate_fd_statistics(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask, 
+                times = 'winter',
+            )
 
+			# Longitude corrections for ERA5
             if args.model == 'era5':
 
                 tmp = freq[:,lon_ind]
@@ -703,57 +910,137 @@ if __name__ == '__main__':
             severity_win.append(sev)
 
 
-        # Make maps of statistics
+        # Make maps of characteristics
         frequencies = [frequency, frequency_sum, frequency_win]
         savename = 'frequency_maps_%s.png'%level
-        make_statistics_maps(frequencies, lat, lon, 'frequency', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 50, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_statistics_maps(
+            frequencies, 
+            lat, 
+            lon, 
+            'frequency', 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'], 
+            cmin = 0, 
+            cmax = 50, 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
         durations = [duration, duration_sum, duration_win]
         savename = 'duration_maps_%s.png'%level
-        make_statistics_maps(durations, lat, lon, 'duration', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = 0, cmax = 50, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_statistics_maps(
+            durations, 
+            lat, 
+            lon, 
+            'duration', 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'], 
+            cmin = 0, 
+            cmax = 50, 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
         # For comparative analysis with different indices, normalize the severities
         max_sev = [np.nanmax(np.abs(severity[n])) for n in range(len(fd_types))]
         severity = [severity[n]/max_sev[n] for n in range(len(fd_types))]
         severity_sum = [severity_sum[n]/max_sev[n] for n in range(len(fd_types))]
         severity_win = [severity_win[n]/max_sev[n] for n in range(len(fd_types))]
+        
         severities = [severity, severity_sum, severity_win]
         savename = 'severity_maps_%s.png'%level
-        make_statistics_maps(severities, lat, lon, 'severity', fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = -1, cmax = 0, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_statistics_maps(
+            severities, 
+            lat, 
+            lon, 
+            'severity', 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'], 
+            cmin = -1, 
+            cmax = 0, 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
         
-        # Make box plots of statistics
+        # Make box plots of characteristics
         box_data = [[frequency[n].flatten(), frequency_sum[n].flatten(), frequency_win[n].flatten()] for n in range(len(fd_types))]
         savename = 'frequency_boxplots_%s.png'%level
-        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'frequency', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_boxplots(
+            box_data, 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'], 
+            'frequency', 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
         box_data = [[duration[n].flatten(), duration_sum[n].flatten(), duration_win[n].flatten()] for n in range(len(fd_types))]
         savename = 'duration_boxplots_%s.png'%level
-        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'duration', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_boxplots(
+            box_data, 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'], 
+            'duration', 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
         box_data = [[severity[n].flatten(), severity_sum[n].flatten(), severity_win[n].flatten()] for n in range(len(fd_types))]
         savename = 'severity_boxplots_%s.png'%level
-        make_boxplots(box_data, fd_types, ['Annual', 'MAMJJA', 'SONDJF'], 'severity', path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_boxplots(
+            box_data, 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'], 
+            'severity', 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
-        # Special maps of characteristics, rather than making columns time
+        # Special maps of characteristics, rather than making columns in time
         characteristics = [frequency, duration, severity]
         savename = 'fd_characteristics_maps_%s.png'%level
-        make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_statistics_maps(
+            characteristics, 
+            lat, 
+            lon, 
+            'characteristics', 
+            fd_types, 
+            ['Frequency', 'Duration', 'Normalized Severity'], 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
         # "Summer" maps
         characteristics = [frequency_sum, duration_sum, severity_sum]
         savename = 'fd_characteristics_maps_%s_sum.png'%level
-        make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_statistics_maps(
+            characteristics, 
+            lat, 
+            lon, 
+            'characteristics', 
+            fd_types, 
+            ['Frequency', 'Duration', 'Normalized Severity'], 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
         # "Winter" maps 
         characteristics = [frequency_win, duration_win, severity_win]
         savename = 'fd_characteristics_maps_%s_win.png'%level
-        make_statistics_maps(characteristics, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+        make_statistics_maps(
+            characteristics, 
+            lat, 
+            lon, 
+            'characteristics', 
+            fd_types, 
+            ['Frequency', 'Duration', 'Normalized Severity'], 
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
 
-    # Trends analysis:
-        # Load in one year, do characteristic calculations, load next year, repeat to get annual average per year
-        # Then do trend (plot maps and plot time series with regression line)
-        # Look at trends over a specific region
+    # Perform trends analysis if desired
     if args.fd_trend_analysis:
+        # Initialize trend datasets
         slopes = {}; pvals = {}
         slopes['frequency'] = []; slopes['duration'] = []; slopes['severity'] = []
         pvals['frequency'] = []; pvals['duration'] = []; pvals['severity'] = []
@@ -767,8 +1054,17 @@ if __name__ == '__main__':
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
             print(fd_type)
 
-            # Perform FD statistics calculations for the full year
-            frequency, duration, severity = calculate_fd_statistics_by_year(args, fn_base, sname, ind_base, ind_sname, mask, fd_type = fd_type)
+            # Perform FD statistics calculations for each year
+            frequency, duration, severity = calculate_fd_statistics_by_year(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask, 
+                fd_type = fd_type,
+            )
+            # Longitude corrections for ERA5
             if args.model == 'era5':
                 tmp = frequency[:,:,lon_ind]
                 frequency = np.concatenate([tmp, frequency[:,:,:lon_ind[0]]], axis = 2)
@@ -780,7 +1076,17 @@ if __name__ == '__main__':
                 severity = np.concatenate([tmp, severity[:,:,:lon_ind[0]]], axis = 2)
 
             # Perform FD statistics calculations for the "summer"
-            frequency_sum, duration_sum, severity_sum = calculate_fd_statistics_by_year(args, fn_base, sname, ind_base, ind_sname, mask, fd_type = fd_type, times = 'summer')
+            frequency_sum, duration_sum, severity_sum = calculate_fd_statistics_by_year(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask, 
+                fd_type = fd_type, 
+                times = 'summer',
+            )
+            # Longitude corrections for ERA5
             if args.model == 'era5':
                 tmp = frequency_sum[:,:,lon_ind]
                 frequency_sum = np.concatenate([tmp, frequency_sum[:,:,:lon_ind[0]]], axis = 2)
@@ -792,7 +1098,17 @@ if __name__ == '__main__':
                 severity_sum = np.concatenate([tmp, severity_sum[:,:,:lon_ind[0]]], axis = 2)
 
             # Perform FD statistics calculations for the "winter"
-            frequency_win, duration_win, severity_win = calculate_fd_statistics_by_year(args, fn_base, sname, ind_base, ind_sname, mask, fd_type = fd_type, times = 'winter')
+            frequency_win, duration_win, severity_win = calculate_fd_statistics_by_year(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask, 
+                fd_type = fd_type, 
+                times = 'winter',
+            )
+            # Longitude corrections for ERA5
             if args.model == 'era5':
                 tmp = frequency_win[:,:,lon_ind]
                 frequency_win = np.concatenate([tmp, frequency_win[:,:,:lon_ind[0]]], axis = 2)
@@ -809,10 +1125,11 @@ if __name__ == '__main__':
 
             if args.region == 'none':
                 if args.model == 'gldas':
-                    # For unknown reasons, using GLDAS data past 2011 in the trend analysis produces 
+                    # Using GLDAS data past 2011 in the trend analysis produces 
                     # strange gridding artifacts that are not realistic; perform the trend only to 2011 for GLDAS
                     # and all for ERA5
-                    ind = np.where(years <= 2011)[0]
+                    pass
+                    #ind = np.where(years <= 2011)[0]
                 else:
                     ind = np.where(years <= 2025)[0]
 
@@ -823,13 +1140,13 @@ if __name__ == '__main__':
                 slope_sev, _, pval_sev = trend_analysis(years[ind].copy(), severity[ind,:].copy())
 
                 T, I, J = frequency_sum.shape
-                # Repeat for "summer"
+                # Trend analysis for "summer"
                 slope_freq_sum, _, pval_freq_sum = trend_analysis(years[ind].copy(), frequency_sum[ind,:].copy())
                 slope_dur_sum, _, pval_dur_sum = trend_analysis(years[ind].copy(), duration_sum[ind,:].copy())
                 slope_sev_sum, _, pval_sev_sum = trend_analysis(years[ind].copy(), severity_sum[ind,:].copy())
 
                 T, I, J = frequency_win.shape
-                # Repeat for "winter"
+                # Trend analysis for "winter"
                 slope_freq_win, _, pval_freq_win = trend_analysis(years[ind].copy(), frequency_win[ind,:].copy())
                 slope_dur_win, _, pval_dur_win = trend_analysis(years[ind].copy(), duration_win[ind,:].copy())
                 slope_sev_win, _, pval_sev_win = trend_analysis(years[ind].copy(), severity_win[ind,:].copy())
@@ -856,7 +1173,7 @@ if __name__ == '__main__':
                 slopes['severity'].append([slope_sev, slope_sev_sum, slope_sev_win]) 
                 pvals['severity'].append([pval_sev, pval_sev_sum,pval_sev_win])
 
-            # Peform trend analysis of overall means
+            # Peform trend analysis of spatial means
             if np.invert(args.region == 'none'):
                 # Subset data to a region if necessary
                 frequency, _, _ = subset_data(frequency, sub_lat, lon[0,:], subset = args.region)
@@ -873,26 +1190,29 @@ if __name__ == '__main__':
 
                 T, I, J = frequency.shape
 
-            # tmp_freq = np.nanmean(frequency, axis = -1)
+            # Perform spatial mean of the datasets
             tmp_freq = np.nanmean(frequency.reshape(T,I*J), axis = -1)
             tmp_dur = np.nanmean(duration.reshape(T,I*J), axis = -1)
             tmp_sev = np.nanmean(severity.reshape(T,I*J), axis = -1)
+            # Trend analysis of the spatial means
             slope_freq, intercept_freq, pval_freq = trend_analysis(years.copy(), tmp_freq.copy())
             slope_dur, intercept_dur, pval_dur = trend_analysis(years.copy(), tmp_dur.copy())
             slope_sev, intercept_sev, pval_sev = trend_analysis(years.copy(), tmp_sev.copy())
 
-            # Repeat for "summer"
+            # Perform spatial mean for "summer"
             tmp_freq_sum = np.nanmean(frequency_sum.reshape(T,I*J), axis = -1)
             tmp_dur_sum = np.nanmean(duration_sum.reshape(T,I*J), axis = -1)
             tmp_sev_sum = np.nanmean(severity_sum.reshape(T,I*J), axis = -1)
+            # Trend analysis of the spatial means
             slope_freq_sum, intercept_freq_sum, pval_freq_sum = trend_analysis(years.copy(), tmp_freq_sum.copy())
             slope_dur_sum, intercept_dur_sum, pval_dur_sum = trend_analysis(years.copy(), tmp_dur_sum.copy())
             slope_sev_sum, intercept_sev_sum, pval_sev_sum = trend_analysis(years.copy(), tmp_sev_sum.copy())
 
-            # Repeat for "winter"
+            # Perform spatial mean for "winter"
             tmp_freq_win = np.nanmean(frequency_win.reshape(T,I*J), axis = -1)
             tmp_dur_win = np.nanmean(duration_win.reshape(T,I*J), axis = -1)
             tmp_sev_win = np.nanmean(severity_win.reshape(T,I*J), axis = -1)
+            # Trend analysis of the spatial means
             slope_freq_win, intercept_freq_win, pval_freq_win = trend_analysis(years.copy(), tmp_freq_win.copy())
             slope_dur_win, intercept_dur_win, pval_dur_win = trend_analysis(years.copy(), tmp_dur_win.copy())
             slope_sev_win, intercept_sev_win, pval_sev_win = trend_analysis(years.copy(), tmp_sev_win.copy())
@@ -911,23 +1231,48 @@ if __name__ == '__main__':
             overall_ts.append([tmp_sev, tmp_sev_sum, tmp_sev_win])
             
 
-        # Make maps
+        # Map variables
         characteristic = ['frequency', 'duration', 'severity']
         labels = ['FD Frequency', 'FD Duration', 'FD Severity']
         cmins = [-0.06, -0.5, -0.0015] # May need to adjust based on model
         cmaxes = [0.06, 0.5, 0.0015]   # May need to adjust based on model
 
         for n in range(len(characteristic)):
-            # Make the maps
+            # Make the maps of trends and their statistical significances
             if args.region == 'none':
+                # Trend map
                 map_data = slopes[characteristic[n]]
                 savename = '%s_trends_maps_%s.png'%(characteristic[n], level)
-                make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], cmin = cmins[n], cmax = cmaxes[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                make_trend_maps(
+                    map_data, 
+                    lat, 
+                    lon, 
+                    characteristic[n], 
+                    fd_types, 
+                    ['Annual', 'MAMJJA', 'SONDJF'], 
+                    cmin = cmins[n], 
+                    cmax = cmaxes[n], 
+                    path = '%s/%s/'%(args.figure_path, args.model), 
+                    savename = savename,
+                )
 
                 # Plot the significance
                 map_pval = pvals[characteristic[n]]
                 savename = '%s_trends_significance_maps_%s.png'%(characteristic[n], level)
-                make_trend_maps(map_data, lat, lon, characteristic[n], fd_types, ['Annual', 'MAMJJA', 'SONDJF'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                make_trend_maps(
+                    map_data, 
+                    lat, 
+                    lon, 
+                    characteristic[n], 
+                    fd_types, 
+                    ['Annual', 'MAMJJA', 'SONDJF'], 
+                    sig = map_pval, 
+                    cmin = 0, 
+                    cmax = 3, 
+                    significance_plots = True, 
+                    path = '%s/%s/'%(args.figure_path, args.model), 
+                    savename = savename,
+                )
 
             # Make the time series plots
             savename = '%s_timeseries_trends_%s%s.png'%(characteristic[n], level, region)
@@ -935,39 +1280,126 @@ if __name__ == '__main__':
             overall_slopes_plot = [overall_slopes[0+n], overall_slopes[3+n], overall_slopes[6+n]]
             overall_intercepts_plot = [overall_intercepts[0+n], overall_intercepts[3+n], overall_intercepts[6+n]]
             overall_slopes_pval_plot = [overall_slopes_pval[0+n], overall_slopes_pval[3+n], overall_slopes_pval[6+n]]
-            timeseries_plot(years, overall_ts_plot, overall_slopes_plot, overall_intercepts_plot, overall_slopes_pval_plot, fd_types, characteristic[n], ['Annual', 'MAMJJA', 'SONDJF'], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            timeseries_plot(
+                years, 
+                overall_ts_plot, 
+                overall_slopes_plot, 
+                overall_intercepts_plot, 
+                overall_slopes_pval_plot, 
+                fd_types, characteristic[n], 
+                ['Annual', 'MAMJJA', 'SONDJF'], 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
         # Special maps that have all characteristics instead of by time
         if args.region == 'none':
+        	# Full annual trend maps
             map_data = [[slopes['frequency'][n][0], slopes['duration'][n][0], slopes['severity'][n][0]] for n in range(len(characteristic))]
             savename = 'characteristic_trends_maps_%s.png'%level
-            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], cmin = cmins, cmax = cmaxes, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_trend_maps(
+                map_data, 
+                lat, 
+                lon, 
+                'characteristics', 
+                fd_types, 
+                ['Frequency', 'Duration', 'Normalized Severity'], 
+                cmin = cmins, 
+                cmax = cmaxes, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
+			# Full annual trend significance maps
             map_pval = [[pvals['frequency'][n][0], pvals['duration'][n][0], pvals['severity'][n][0]] for n in range(len(characteristic))]
             savename = 'characteristic_trends_significance_maps_%s.png'%level
-            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_trend_maps(
+                map_data, 
+                lat, 
+                lon, 
+                'characteristics', 
+                fd_types, 
+                ['Frequency', 'Duration', 'Normalized Severity'], 
+                sig = map_pval, 
+                cmin = 0, 
+                cmax = 3, 
+                significance_plots = True, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
-            # "Summer" maps
+            # "Summer" trend maps
             map_data = [[slopes['frequency'][n][1], slopes['duration'][n][1], slopes['severity'][n][1]] for n in range(len(characteristic))]
             savename = 'characteristic_trends_maps_%s_sum.png'%level
-            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], cmin = cmins, cmax = cmaxes, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_trend_maps(
+                map_data, 
+                lat, 
+                lon, 
+                'characteristics', 
+                fd_types, 
+                ['Frequency', 'Duration', 'Normalized Severity'], 
+                cmin = cmins, 
+                cmax = cmaxes, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
+			# "Summer" trend significance maps
             map_pval = [[pvals['frequency'][n][1], pvals['duration'][n][1], pvals['severity'][n][1]] for n in range(len(characteristic))]
             savename = 'characteristic_trends_significance_maps_%s_sum.png'%level
-            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_trend_maps(
+                map_data, 
+                lat, 
+                lon, 
+                'characteristics', 
+                fd_types, 
+                ['Frequency', 'Duration', 'Normalized Severity'], 
+                sig = map_pval, 
+                cmin = 0, 
+                cmax = 3, 
+                significance_plots = True, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
-            # "Winter" map
+            # "Winter" trend maps
             map_data = [[slopes['frequency'][n][2], slopes['duration'][n][2], slopes['severity'][n][2]] for n in range(len(characteristic))]
             savename = 'characteristic_trends_maps_%s_win.png'%level
-            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], cmin = cmins, cmax = cmaxes, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_trend_maps(
+                map_data, 
+                lat, 
+                lon, 
+                'characteristics', 
+                fd_types, 
+                ['Frequency', 'Duration', 'Normalized Severity'], 
+                cmin = cmins, 
+                cmax = cmaxes, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
+			# "Winter" trend significance maps
             map_pval = [[pvals['frequency'][n][2], pvals['duration'][n][2], pvals['severity'][n][2]] for n in range(len(characteristic))]
             savename = 'characteristic_trends_significance_maps_%s_win.png'%level
-            make_trend_maps(map_data, lat, lon, 'characteristics', fd_types, ['Frequency', 'Duration', 'Normalized Severity'], sig = map_pval, cmin = 0, cmax = 3, significance_plots = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_trend_maps(
+                map_data, 
+                lat, 
+                lon, 
+                'characteristics', 
+                fd_types, 
+                ['Frequency', 'Duration', 'Normalized Severity'], 
+                sig = map_pval, 
+                cmin = 0, 
+                cmax = 3, 
+                significance_plots = True, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
         
 
-    # Sensitivity analysis:
+    # Perform sensitivity analysis if desired
     if args.fd_sensitivity_analysis:
+        # Determine the variables to examine in the sensitivity analysis (used to be different depending on models)
         if args.model == 'era5':
             variable_snames = ['tair', 'd2m', 'e', 'pev', 'tp', 'vpd', 'swvlrz', 'enso', 'iod', 'mjo']
             labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
@@ -985,13 +1417,13 @@ if __name__ == '__main__':
         I, J = mask.shape
         mask_1d = mask.reshape(I*J)
 
-        # Initialize the correlation dataset
+        # Initialize the correlation datasets
         r = {}; sig = {}
         r_index = {}; sig_index = {}
         r_lag = {}; sig_lag = {}
         r_index_lag = {}; sig_index_lag = {}
 
-        # Make the hypthesis testing for correlation
+        # Make the hypthesis testing for correlations
         rng = np.random.default_rng()
         test_method = stats.MonteCarloMethod(n_resamples = 1000, rvs = (rng.normal, rng.normal))
 
@@ -1002,10 +1434,19 @@ if __name__ == '__main__':
 
         # Perform analysis for each FD method
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
+            # Make boxplots showing standardized anomalies of variables at the start of and prior to FD
             if args.skip_variable_boxplots:
-                # Collect datetimes of FD start; note the shape is lat x lon
-                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = sub_lat, lon = lon[0,:], region = args.region)
+                # Collect datetimes of FD start; note the shape is len(lat)*len(lon)
+                start_dates, start_dates_ind = load_start_times(
+                    args, 
+                    fn_base, 
+                    sname, 
+                    lat = sub_lat, 
+                    lon = lon[0,:], 
+                    region = args.region,
+                )
 
+				# Determine the anomalies of the spatially averaged variables prior to FD
                 variables = {}
                 variables_5day = {}
                 variables_10day = {}
@@ -1014,13 +1455,15 @@ if __name__ == '__main__':
                     # Load the variable
                     variable = load_raw_data(var_sname, args.model)
 
+					# Subset the variable if needed
                     if np.invert(args.region == 'none'):
                         variable, _, _ = subset_data(variable, sub_lat, lon[0,:], subset = args.region)
 
+					# Convert so positive PET represents energy fluxed into the atmosphere
                     if (var_sname == 'pev') & (args.model == 'era5'):
-                        variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
+                        variable = -1*variable 
 
-                    # Apply a 5 day running mean to bring pentad behavior
+                    # Apply a 5 day running mean to bring pentad behavior and filter out white noise
                     if var_sname not in climate_indices:
                         T = variable.shape[0]
                         runmean = 5
@@ -1035,10 +1478,12 @@ if __name__ == '__main__':
                                 variable[:,i,j] = np.convolve(variable[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
 
                     # Standardize the variable
-                    variable = standardize_variable(variable, 
-                                                    dates_all, 
-                                                    datetime(1990, 1, 1),
-                                                    datetime(2020, 12, 31))
+                    variable = standardize_variable(
+                        variable, 
+                        dates_all, 
+                        datetime(1990, 1, 1),
+                        datetime(2020, 12, 31),
+                    )
                     
                     T, I, J = variable.shape
                     # NaN sea values
@@ -1047,13 +1492,12 @@ if __name__ == '__main__':
 
                     variable = variable.reshape(T, I*J)
                     
-                    # Collect the desired dates
                     variables[var_sname] = []
                     variables_5day[var_sname] = []
                     variables_10day[var_sname] = []
                     variables_15day[var_sname] = []
                     
-                    # Note from this, all anomalies are in a flattened shape
+                    # Note for this, all anomalies are in a flattened shape
                     for ij in tqdm(range(I*J), desc = 'Indexing %s anomalies'%var_sname):
                         # Skip sea and arid grids
                         if mask_1d[ij] == 0:
@@ -1102,22 +1546,36 @@ if __name__ == '__main__':
 
                 # Make the box plot
                 savename = 'variable_anomaly_boxplot_for_fd_%s_%s%s.png'%(fd_type, level, region)
-                make_variable_boxplots(box_data, labels, 
-                                    ['15 Days before FD', '10 Days before FD', '5 Days before FD', 'Start of FD'],
-                                    fd_type, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                make_variable_boxplots(
+                    box_data, 
+                    labels, 
+                    ['15 Days before FD', '10 Days before FD', '5 Days before FD', 'Start of FD'],
+                    fd_type, 
+                    path = '%s/%s/'%(args.figure_path, args.model), 
+                    savename = savename,
+                )
                 
+            # Perform correlation analysis between FD labels and FD indices with driving variables
             if args.skip_correlation_plots:
                 print(fd_type)
                 
                 # Load FD and index data for all years
-                fd, fd_index = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, return_fd_and_indices = True)
+                fd, fd_index = calculate_fd_statistics(
+                    args, 
+                    fn_base, 
+                    sname, 
+                    ind_base,
+                    ind_sname, 
+                    mask, 
+                    return_fd_and_indices = True,
+                )
 
                 # Subset if necessary
                 if np.invert(args.region == 'none'):
                     fd, _, _ = subset_data(fd, sub_lat, lon[0,:], subset = args.region)
                     fd_index, _, _ = subset_data(fd_index, sub_lat, lon[0,:], subset = args.region)
 
-                # Apply a 5 day running mean to smooth out white noise and deliver pentad behavior
+                # Apply a 5 day running mean to the index to smooth out white noise and deliver pentad behavior
                 T = fd_index.shape[0]
                 runmean = 5
 
@@ -1142,11 +1600,11 @@ if __name__ == '__main__':
                 fd = fd.reshape(T, I*J).astype(np.float32)
                 fd_index = fd_index.reshape(T, I*J).astype(np.float32)
 
-                # Make a spatial average lagged correlations
+                # Make a spatial average for lagged correlations
                 fd_space = np.nanmean(fd, axis = -1)
                 fd_index_space = np.nanmean(fd_index, axis = -1)
 
-                # Perform correlation for each dataset
+                # Perform correlation for each driving variable
                 for var_sname in variable_snames:
                     print(var_sname)
                     # Load the variable data
@@ -1156,9 +1614,11 @@ if __name__ == '__main__':
                     if np.invert(args.region == 'none'):
                         variable, _, _ = subset_data(variable, sub_lat, lon[0,:], subset = args.region)
 
+					# Convert so positive PET represents energy fluxed into the atmosphere
                     if (var_sname == 'pev') & (args.model == 'era5'):
-                        variable = -1*variable # Convert so positive PET represents energy fluxed into the atmosphere
+                        variable = -1*variable 
 
+					# Climate indices are already monthly to 15 day, so the running mean is not applied to them
                     if var_sname not in climate_indices:
                         T = variable.shape[0]
                         # Apply a 5 day running mean to smooth out white noise and deliver pentad behavior
@@ -1172,7 +1632,7 @@ if __name__ == '__main__':
                         for i in range(I):
                             for j in range(J):
                                 variable[:,i,j] = np.convolve(variable[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
-                    # Cut off ends to avoid biasing correlation results
+                    # Cut off ends to avoid biasing correlation results and match the shape of other datasets
                     variable = variable[2:,:,:]
                     variable = variable[:-2,:,:]
 
@@ -1200,7 +1660,7 @@ if __name__ == '__main__':
 
                         print(r['%s_%s'%(fd_type, var_sname)].shape, sig['%s_%s'%(fd_type, var_sname)].shape)
 
-                        # Repeat for the index
+                        # Repeat for the FD index
                         results = stats.pearsonr(fd_index, variable, method = test_method, axis = 0)
 
                         # Fix longitude displacement
@@ -1214,6 +1674,7 @@ if __name__ == '__main__':
                             tmp = pval[:,lon_ind]
                             pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
+						# Obtain the correlation and significance
                         r_index['%s_%s'%(fd_type, var_sname)] = stat
                         sig_index['%s_%s'%(fd_type, var_sname)] = pval
 
@@ -1246,45 +1707,89 @@ if __name__ == '__main__':
                             results_index = stats.pearsonr(fd_index_space[:-N], variable[N:], method = test_method)
                             var_print = variable[N:]; ind_print = fd_index_space[:-N]
                             
+                        # Obtain the correlation and significance results
                         lagged_corr = results.statistic; lagged_sig = results.pvalue
                         lagged_index_corr = results_index.statistic; lagged_index_sig = results_index.pvalue
 
-                        # Add the lagged correlations to the list
+                        # Add the lagged correlations to their respective list
                         r_lag['%s_%s'%(fd_type, var_sname)].append(lagged_corr)
                         r_index_lag['%s_%s'%(fd_type, var_sname)].append(lagged_index_corr)
                         sig_lag['%s_%s'%(fd_type, var_sname)].append(lagged_sig)
                         sig_index_lag['%s_%s'%(fd_type, var_sname)].append(lagged_index_sig)
 
+					# Convert to correlations to np arrays
                     r_lag['%s_%s'%(fd_type, var_sname)] = np.array(r_lag['%s_%s'%(fd_type, var_sname)])
                     r_index_lag['%s_%s'%(fd_type, var_sname)] = np.array(r_index_lag['%s_%s'%(fd_type, var_sname)])
                     sig_lag['%s_%s'%(fd_type, var_sname)] = np.array(sig_lag['%s_%s'%(fd_type, var_sname)])
                     sig_index_lag['%s_%s'%(fd_type, var_sname)] = np.array(sig_index_lag['%s_%s'%(fd_type, var_sname)])
 
+			# Determine the percentage of FDs start with high moisture deficit vs high energy demand
+			# Start here with just collecting FD start times 
             if args.skip_energy_moisture_drivers:
-                # Collect datetimes of FD start; note the shape is lat x lon
-                start_dates, start_dates_ind = load_start_times(args, fn_base, sname, lat = sub_lat, lon = lon[0,:], region = args.region)
+                # Collect datetimes of FD start; note the shape is len(lat)*len(lon)
+                start_dates, start_dates_ind = load_start_times(
+                    args, 
+                    fn_base, sname, 
+                    lat = sub_lat, 
+                    lon = lon[0,:], 
+                    region = args.region,
+                )
+
                 fd_starts[fd_type] = start_dates_ind
                 # print(fd_starts)
 
+			# Perform an EOF analysis of FD indices to determine leading patterns
             if args.skip_eof_analysis:
                 if args.model == 'gldas':
-                    # Filler lon_ind fore the eof_analysis function
+                    # Filler lon_ind for the eof_analysis function
                     lon_ind = None
                     
                 # Collect index data
                 print('Loading %s and preparing data'%ind_sname)
-                _, fd_idx = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask, return_fd_and_indices = True)
+                _, fd_idx = calculate_fd_statistics(
+                    args, 
+                    fn_base, 
+                    sname, 
+                    ind_base, 
+                    ind_sname, 
+                    mask, 
+                    return_fd_and_indices = True,
+                )
+
                 ind_sname = 'fdii%s'%level if ind_sname is None else ind_sname
 
-                eof_analysis(args, fd_idx, mask, lat, lon, dates_all, lon_ind, ind_sname)
+				# Perform EOF analysis and plot the results
+                eof_analysis(
+                    args,
+                    fd_idx, 
+                    mask, 
+                    lat, 
+                    lon, 
+                    dates_all, 
+                    lon_ind, 
+                    ind_sname,
+                )
 
                 if ind_sname == 'fdii%s'%level:
                     # Also conduct analysis with PET, ET, P (SM was already done for Yuan/RZSM method)
                     analysis_vars = ['tp', 'pev', 'e']
                     for var in analysis_vars:
+                    	# Load the variable
                         variable = load_raw_data(var, args.model)
-                        eof_analysis(args, variable, mask, lat, lon, dates_all, lon_ind, ind_sname)
+                        
+                        # Perform EOF analysis and plot results
+                        eof_analysis(
+                            args, 
+                            variable, 
+                            mask, 
+                            lat, 
+                            lon,
+                            dates_all, 
+                            lon_ind, 
+                            ind_sname,
+                        )
 
+		# Outside of the fd_type loop, perform analysis for energy vs moisture drivers (done with all FD types together)
         if args.skip_energy_moisture_drivers:
             # Load precipitation
             precip = load_raw_data('tp', args.model)
@@ -1309,14 +1814,17 @@ if __name__ == '__main__':
             if np.invert(args.region == 'none'):
                 pet, _, _ = subset_data(pet, sub_lat, lon[0,:], subset = args.region)
 
+			# Convert so positive PET represents energy fluxed into the atmosphere
             if args.model == 'era5':
-                pet = -1*pet# Convert so positive PET represents energy fluxed into the atmosphere
+                pet = -1*pet
 
             # Determine the standardized anomaly of PET
-            pet = standardize_variable(pet, 
-                                       dates_all, 
-                                       datetime(1990, 1, 1),
-                                       datetime(2020, 12, 31))
+            pet = standardize_variable(
+                pet, 
+                dates_all, 
+                datetime(1990, 1, 1),
+                datetime(2020, 12, 31),
+            )
             
             # Reshape to have the same spatial dimension as the start dates
             # T, I, J = spi.shape
@@ -1336,7 +1844,7 @@ if __name__ == '__main__':
                     # Average over start of FD - 30 days to start of FD (covers onset period plus a little time before)
                     ind_end = fd_starts[fd_type][ij]
                     for t in ind_end:
-                        # If FD occurs at the near of the time series, start at the beginning of the time series
+                        # If FD occurs near the start of the time series, start at the beginning of the time series
                         if (t - args.em_lag_days) < 0:
                             start = 0
                         else:
@@ -1410,88 +1918,172 @@ if __name__ == '__main__':
             #     print('%s RMSC with SM%s: %4.3f'%(var, level, sm_rmsc))
             #     print('%s RMSC with FDII%s: %4.3f'%(var, level, fdii_rmsc))
             
+        # At the end of the loop, organize the correlation data to make the maps and lag plots
         if args.skip_correlation_plots:
             if args.region == 'none':
                 for n, var_sname in enumerate(variable_snames):
                     map_data = [r['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                     sig_data = [sig['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                     
-                    # Make the maps
+                    # Make the correlation maps (for FD labels)
                     savename = '%s_fd_%s_correlation_map.png'%(var_sname, level)
-                    make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                    make_correlation_maps(
+                        map_data, 
+                        sig_data, 
+                        lat, 
+                        lon, 
+                        fd_types, 
+                        labels[n], 
+                        path = '%s/%s/'%(args.figure_path, args.model), 
+                        savename = savename,
+                    )
 
                     map_data = [r_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                     sig_data = [sig_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                     
-                    # Make the maps
+                    # Make the correlation maps (for FD indices)
                     savename = '%s_fd_index_%s_correlation_map.png'%(var_sname, level)
-                    make_correlation_maps(map_data, sig_data, lat, lon, fd_types, labels[n], index_corr = True, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+                    make_correlation_maps(
+                        map_data, 
+                        sig_data, 
+                        lat, 
+                        lon, 
+                        fd_types, 
+                        labels[n], 
+                        index_corr = True, 
+                        path = '%s/%s/'%(args.figure_path, args.model), 
+                        savename = savename,
+                    )
 
-            # Make the time series plots
+            # Make the lag correlation plots (FD labels)
             savename = 'lagged_correlation_fd_%s%s.png'%(level, region)
-            make_lagged_correlation_plot(r_lag, sig_lag, lags, variable_snames, fd_types, labels, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_lagged_correlation_plot(
+                r_lag, 
+                sig_lag, 
+                lags, 
+                variable_snames, 
+                fd_types, 
+                labels, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
-            # Make the time series plots
+            # Make the lag correlation plots (FD indices)
             savename = 'lagged_correlation_fd_index_%s%s.png'%(level, region)
-            make_lagged_correlation_plot(r_index_lag, sig_index_lag, lags, variable_snames, fd_types, labels, path = '%s/%s/'%(args.figure_path, args.model), savename = savename)
+            make_lagged_correlation_plot(
+                r_index_lag, 
+                sig_index_lag, 
+                lags, 
+                variable_snames, 
+                fd_types,
+                labels, 
+                path = '%s/%s/'%(args.figure_path, args.model), 
+                savename = savename,
+            )
 
+		# Determine when SPI < -1 and PET anomalies > 1 for FD events and make the bar plots
         if args.skip_energy_moisture_drivers:
 
             # Make barplots with associated conditions
             bar_data = []
             bar_std = []
             for fd_type in fd_types:
+                # Determine when moisture limited, energy limited, and combinations thereof occur relative to FD events
                 moisture_limited = np.where((spi_anomalies[fd_type] < -1) & (pet_anomalies[fd_type] < 1), 1, 0)
                 energy_limited = np.where((spi_anomalies[fd_type] > -1) & (pet_anomalies[fd_type] > 1), 1, 0)
                 both_limited = np.where((spi_anomalies[fd_type] < -1) & (pet_anomalies[fd_type] > 1), 1, 0)
                 moisture_condition = np.where(spi_anomalies[fd_type] < -1, 1, 0)
                 energy_condition = np.where(pet_anomalies[fd_type] > 1, 1, 0)
 
-                # Relative percentage of FD events
+                # Relative percentage events during the lead up to FD
                 moisture_limited_regime = np.nansum(moisture_limited) * 100/spi_anomalies[fd_type].size
                 energy_limited_regime = np.nansum(energy_limited) * 100/spi_anomalies[fd_type].size
                 both_limited_regime = np.nansum(both_limited) * 100/spi_anomalies[fd_type].size
                 moisture_condition_regime = np.nansum(moisture_condition) * 100/spi_anomalies[fd_type].size
                 energy_condition_regime = np.nansum(energy_condition) * 100/spi_anomalies[fd_type].size
 
-                bar_data.append([moisture_condition_regime, energy_condition_regime, moisture_limited_regime, energy_limited_regime, both_limited_regime])
+                bar_data.append([
+                    moisture_condition_regime, 
+                    energy_condition_regime, 
+                    moisture_limited_regime, 
+                    energy_limited_regime, 
+                    both_limited_regime,
+                ])
 
-                # Standard deviations of relative FD events
+                # Standard deviations of relative percentages
                 moisture_limited_regime = np.nanstd(moisture_limited * 100/spi_anomalies[fd_type].size)
                 energy_limited_regime = np.nanstd(energy_limited * 100/spi_anomalies[fd_type].size)
                 both_limited_regime = np.nanstd(both_limited * 100/spi_anomalies[fd_type].size)
                 moisture_condition_regime = np.nanstd(moisture_condition * 100/spi_anomalies[fd_type].size)
                 energy_condition_regime = np.nanstd(energy_condition * 100/spi_anomalies[fd_type].size)
 
-                bar_std.append([moisture_condition_regime, energy_condition_regime, moisture_limited_regime, energy_limited_regime, both_limited_regime])
+                bar_std.append([
+                    moisture_condition_regime, 
+                    energy_condition_regime, 
+                    moisture_limited_regime, 
+                    energy_limited_regime, 
+                    both_limited_regime
+                ])
 
             # Tick labels
             x_ticks = ['SPI<-1', 'PET>1', 'SPI<-1 &\nPET<1', 'SPI>-1 &\nPET>1', 'SPI<-1 &\nPET>1']
 
+			# Make the boxplots
             savename = 'moisture_energy_driver_%d_lag_day_for_layer_%s_fd%s.png'%(args.em_lag_days, level, region)
-            make_barplots(bar_data, 
-                          fd_types, 
-                          'Relative Number (%) of FDs\nwith Given Conditions',
-                          x_ticks,
-                          bar_err = bar_std,
-                          title = '%d Days before FD'%args.em_lag_days,
-                          path = '%s/%s/'%(args.figure_path, args.model),
-                          savename = savename)
+            make_barplots(
+                bar_data, 
+                fd_types, 
+                'Relative Number (%) of FDs\nwith Given Conditions',
+                x_ticks,
+                bar_err = bar_std,
+                title = '%d Days before FD'%args.em_lag_days,
+                path = '%s/%s/'%(args.figure_path, args.model),
+                savename = savename,
+            )
 
-
+	# Make a set of scatterplots of different FD types with each other
     if args.fd_scatterplots:
         frequency = []
         frequency_sum = []
         frequency_win = []
+        # Perform analysis for all FD types
         for fd_type, sname, fn_base, ind_sname, ind_base in zip(fd_types, fd_snames, fn_bases, index_snames, index_bases):
-            # Perform FD statistics calculations for the all years
-            freq, _, _ = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask)
+            # Perform FD characteristics calculations for the all years
+            freq, _, _ = calculate_fd_statistics(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask,
+            )
+
             frequency.append(freq.flatten())
 
-            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask , times = 'summer')
+			# Calculate FD characteristics for all "summer" months (MAMJJA)
+            freq, dur, sev = calculate_fd_statistics(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask , 
+                times = 'summer',
+            )
+
             frequency_sum.append(freq.flatten())
 
-            freq, dur, sev = calculate_fd_statistics(args, fn_base, sname, ind_base, ind_sname, mask , times = 'winter')
+			# Calculate FD characteristics for all "winter" months (SONDJA)
+            freq, dur, sev = calculate_fd_statistics(
+                args, 
+                fn_base, 
+                sname, 
+                ind_base, 
+                ind_sname, 
+                mask , 
+                times = 'winter',
+            )
+
             frequency_win.append(freq.flatten())
 
         # Remove NaNs
@@ -1503,7 +2095,7 @@ if __name__ == '__main__':
             print(frequency_sum[i].shape)
             print(frequency_win[i].shape)
 
-        # In the event that removed NaNs cause length inconsistency
+        # In the event that removed NaNs cause length inconsistency, ensure there is consistent length
         ind = np.nanmin([len(frequency[0]), len(frequency[1]), len(frequency[2])]) # data[alt_ind is shorter]
         frequency[0] = frequency[0][:ind]; frequency[1] = frequency[1][:ind]; frequency[2] = frequency[2][:ind]
 
@@ -1551,17 +2143,19 @@ if __name__ == '__main__':
 
         # Make the scatter plot 
         savename = 'fd_scatterplots_level_%s.png'%level
-        make_scatterplots(frequency, 
-                          frequency_sum, 
-                          frequency_win, 
-                          correlations, 
-                          pvals, 
-                          fd_types, 
-                          ['Annual', 'MAMJJA', 'SONDJF'],
-                          slope = slopes, 
-                          intercept = intercepts,  
-                          path = '%s/%s/'%(args.figure_path, args.model), 
-                          savename = savename)
+        make_scatterplots(
+            frequency, 
+            frequency_sum, 
+            frequency_win, 
+            correlations, 
+            pvals, 
+            fd_types, 
+            ['Annual', 'MAMJJA', 'SONDJF'],
+            slope = slopes, 
+            intercept = intercepts,  
+            path = '%s/%s/'%(args.figure_path, args.model), 
+            savename = savename,
+        )
         # Scatter plots of different total FD events recoreded by different methods (Fig. 4 in Nogeura 2021)
 
     # Make map highlighting specific regions
@@ -1592,17 +2186,28 @@ if __name__ == '__main__':
         lat = lat[::-1]
         lon = np.arange(-180, 180, resolution)
 
+		# Subset to the plotted domain
         lat_ind = np.where((lat >= -42) & (lat <= 42))[0]
         lon_ind = np.where((lon >= -30) & (lon <= 55))[0]
 
         lat = lat[lat_ind]; lon = lon[lon_ind]
         data = data[lat_ind,:]
         data = data[:,lon_ind]
+        
+        # Make lat and lon 2D for plotted
         lon, lat = np.meshgrid(lon, lat)
 
+		# Make the regional/land cover plot
         # print(Dataset('../../modis/raw/MCD12C1.A2022001.061.2023244164746.hdf', 'r'))
         savename = 'africa_regional_map.png'
-        create_regional_boxes(data, lat, lon, lct[4:], savename = savename, path = args.figure_path)
+        create_regional_boxes(
+            data, 
+            lat, 
+            lon, 
+            lct[4:], 
+            savename = savename, 
+            path = args.figure_path,
+        )
 
         # Close the file
         data_holder.endaccess()
@@ -1611,10 +2216,12 @@ if __name__ == '__main__':
         # Load precipitation data to make a climatological dataset
         years = np.arange(1979, 2024+1)
 
+		# Determine the filename, .nc dictionary key, and units
         fn_base = 'africa_total_precipitation' if args.model == 'era5' else 'africa_gldas.precipitation.daily'
         sname   = 'tp' if args.model == 'era5' else 'precip'
         units   = 'm' if args.model == 'era5' else 'kg m^-2 s^-1'
 
+		# Load the precipitation data
         precip = []
         for year in years:
             print(year)
@@ -1638,7 +2245,7 @@ if __name__ == '__main__':
         # Stack the list into an array
         precip = np.array(precip)
 
-        # Corrections to the longitude for era5
+        # Corrections to the longitude for ERA5
         if args.model == 'era5':
             lon_ind = np.where(lon[0,:] > 330)[0]
             lon_tmp = lon[:,lon_ind]

@@ -1,3 +1,9 @@
+'''Prepare raw datasets by loading them from 
+their original GLDAS/ERA5 folders, subsetting them
+to Africa, early preprocessing, and saving them in 
+the local repository for this project
+'''
+
 import numpy as np
 from glob import glob
 from netCDF4 import Dataset
@@ -26,12 +32,12 @@ if __name__ == '__main__':
             'volumetric_soil_water_layer_4'
         ],
         'gldas':[
-            'gldas.temperature.daily', # Note GLDAS2 does not have dewpoint temperature
+            'gldas.temperature.daily', 
             'gldas.precipitation.daily',
             'gldas.evaporation.daily',
             'gldas.potential_evaporation.daily',
             'gldas.pressure.daily',
-            'gldas.specific_humidity.daily',
+            'gldas.specific_humidity.daily', # Note GLDAS2 does not have dewpoint temperature; this will be calculated from q
             'gldas.wind_speed.daily',
             'gldas.soil_moisture_0-10cm.daily',
             'gldas.soil_moisture_10-40cm.daily',
@@ -78,6 +84,7 @@ if __name__ == '__main__':
         # Collect all the .nc files to be examined
         files = glob('%s/%s/%s*.nc'%(base_path, directories[model][m], variable), recursive = True)
 
+        # Process each file
         for n, file in enumerate(new_sort(files)):
             print(file)
             # Load the data
@@ -98,12 +105,14 @@ if __name__ == '__main__':
             if model == 'era5':
                 lat = lat[:,0]; lon = lon[0,:]
             elif model == 'gldas':
+                # For GLDAS, convert longitude to the same format as ERA5
                 lon = np.where(lon < 0, lon + 360, lon)
+
             data_sub, lat_sub, lon_sub = subset_data(data, lat, lon, subset = 'africa')
             T, I, J = data_sub.shape
 
             if model == 'gldas':
-                # Remove bad labeled data
+                # Remove points labeled as bad data in GLDAS
                 data_sub = np.where(data_sub < -900, np.nan, data_sub)
 
             # Make the lat and lon 2D

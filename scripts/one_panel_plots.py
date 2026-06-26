@@ -1,3 +1,7 @@
+'''Make some quick, one panel maps to examine average
+raw and computed variables.
+'''
+
 import numpy as np
 from typing import Tuple
 import matplotlib.pyplot as plt
@@ -25,7 +29,30 @@ lower_lat = -35; upper_lat = 35
 lower_lon = 335; upper_lon = 53
 
 # Function to make a map
-def make_map(data, lat, lon, title = 'title', cbar_label = 'variable', extend = 'both', cmin = 0, cmax = 1, path = './', savename = 'tmp.png'):
+def make_map(
+        data, 
+        lat, 
+        lon, 
+        title = 'title', 
+        cbar_label = 'variable', 
+        extend = 'both', 
+        cmin = 0, 
+        cmax = 1, 
+        path = './', 
+        savename = 'tmp.png'
+        ) -> None:
+    '''
+    Make a simple map
+
+    Inputs:
+    :param data: Data to be plotted
+    :Param lat, lon: Latitude and longitude values for data
+    :param title: Title of the plot
+    :param cbar_label: Label for the colorbar
+    :param extend: The extend of the colorbar
+    :param cmin, cmax: Minimum and maximum values of the colorbar/plotting
+    :param path, savename: Path to and savename of the figure name
+    '''
 
     data[data == 0] = np.nan
 
@@ -73,8 +100,9 @@ def make_map(data, lat, lon, title = 'title', cbar_label = 'variable', extend = 
     ax.xaxis.set_major_formatter(LonFormatter)
 
     # Plot the data
-    cs = ax.pcolormesh(lon, lat, data, vmin = cmin, vmax = cmax,
-                                          cmap = cmap, transform = proj, zorder = 1)
+    cs = ax.pcolormesh(lon, lat, data, 
+                       vmin = cmin, vmax = cmax, cmap = cmap, 
+                       transform = proj, zorder = 1)
 
     # Set the map extent
     ax.set_extent([lower_lon, upper_lon, lower_lat, upper_lat])
@@ -97,15 +125,14 @@ def make_map(data, lat, lon, title = 'title', cbar_label = 'variable', extend = 
     plt.close()
 
 
-
-
-# Make one panel plot of PET, ET, and frequency trends (ERA5) to send out and show off hole in central Africa
+# Make one panel plot of PET, ET, and frequency trends (ERA5) to 
+# investigate and show off the hole in central Africa
 
 if __name__ == '__main__':
     path = '../'
     years = np.arange(1979, 2024+1)
 
-    # Load ET and average them in time
+    # Load ET
     et = []
     for year in years:
         with Dataset('%s/data/era5/evaporation/africa_evaporation_%04d.nc'%(path, year), 'r') as nc:
@@ -115,6 +142,7 @@ if __name__ == '__main__':
     
     et = np.concatenate(et, axis = 0)
 
+    # Fix a longitude issue with ERA5
     lon_ind = np.where(lon[0,:] > 330)[0]
     lon_tmp = lon[:,lon_ind]
     lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
@@ -122,7 +150,7 @@ if __name__ == '__main__':
     tmp = et[:,:,lon_ind]
     et = np.concatenate([tmp, et[:,:,:lon_ind[0]]], axis = -1)
 
-    # Plot ET
+    # Plot time averaged ET
     make_map(
         np.nanmean(et, axis = 0), 
         lat, 
@@ -136,7 +164,7 @@ if __name__ == '__main__':
         savename = 'era5_et_average.png',
     )
 
-    # Load PET and Average in time
+    # Load PET data
     pet = []
     for year in years:
         with Dataset('%s/data/era5/potential_evaporation/africa_potential_evaporation_%04d.nc'%(path, year), 'r') as nc:
@@ -146,6 +174,7 @@ if __name__ == '__main__':
     
     pet = np.concatenate(pet, axis = 0)
 
+    # Fix the ERA5 longitude issue
     lon_ind = np.where(lon[0,:] > 330)[0]
     lon_tmp = lon[:,lon_ind]
     lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
@@ -153,7 +182,7 @@ if __name__ == '__main__':
     tmp = pet[:,:,lon_ind]
     pet = np.concatenate([tmp, pet[:,:,:lon_ind[0]]], axis = -1)
 
-    # Plot PET
+    # Plot the time averaged PET
     make_map(
         np.nanmean(pet, axis = 0), 
         lat, 
@@ -167,7 +196,7 @@ if __name__ == '__main__':
         savename = 'era5_pet_average.png',
     )
 
-    # Load SESR and Average in time
+    # Load SESR data
     sesr = []
     for year in years:
         with Dataset('%s/data/era5/fd_indices/africa_sesr_%04d.nc'%(path, year), 'r') as nc:
@@ -177,6 +206,7 @@ if __name__ == '__main__':
     
     sesr = np.concatenate(sesr, axis = 0)
 
+    # Fix longitude issue with ERA5
     lon_ind = np.where(lon[0,:] > 330)[0]
     lon_tmp = lon[:,lon_ind]
     lon = np.concatenate([lon_tmp, lon[:,:lon_ind[0]]], axis = 1)
@@ -184,7 +214,7 @@ if __name__ == '__main__':
     tmp = sesr[:,:,lon_ind]
     sesr = np.concatenate([tmp, sesr[:,:,:lon_ind[0]]], axis = -1)
 
-    # Plot PET
+    # Plot time sum of ET (since the average would show up as zeros)
     make_map(
         np.nansum(sesr, axis = 0), 
         lat, 
@@ -203,18 +233,21 @@ if __name__ == '__main__':
     with open(filename, 'rb') as f:
         characteristics = pickle.load(f)
 
+    # Collect the frequency characteristics
     freq = characteristics['freq']
 
+    # Fixing longitude issue
     tmp = freq[:,:,lon_ind]
     freq = np.concatenate([tmp, freq[:,:,:lon_ind[0]]], axis = -1)
 
     T, I, J = freq.shape
 
+    # Collect the slope of the FD frequency change in time
     slope, _, _ = least_squares(years, freq.reshape(T, I*J))
 
     # freq = np.where(freq <= 0, np.nan, freq)
 
-    # Plot SESR FD frequency
+    # Plot total SESR FD frequency
     make_map(
         # slope.reshape(I, J), 
         np.nansum(freq, axis = 0),
