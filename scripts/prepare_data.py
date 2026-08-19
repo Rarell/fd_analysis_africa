@@ -13,6 +13,7 @@ from utils import subset_data, new_sort
 if __name__ == '__main__':
     # Declare all years in the dataset
     years = np.arange(1979, 2024+1)
+    # years = np.arange(2004, 2025+1)
 
     model = 'gldas' # or 'era5'
 
@@ -42,7 +43,8 @@ if __name__ == '__main__':
             'gldas.soil_moisture_0-10cm.daily',
             'gldas.soil_moisture_10-40cm.daily',
             'gldas.soil_moisture_40-100cm.daily',
-            'gldas.soil_moisture_100-200cm.daily'
+            'gldas.soil_moisture_100-200cm.daily',
+            # 'gldas.soil_moisture_root_zone.daily',
         ]
         }
 
@@ -72,13 +74,14 @@ if __name__ == '__main__':
         'soil_moisture_0-10cm',
         'soil_moisture_10-40cm',
         'soil_moisture_40-100cm',
-        'soil_moisture_100-200cm'
+        'soil_moisture_100-200cm',
+        # 'soil_moisture_root_zone',
     ]
     }
 
     # Base paths
-    base_path = '/ourdisk/hpc/ai2es/sedris/%s'%model
-    base_write = '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s'%model
+    base_path = '/ourdisk/hpc/ai2es/sedris/%s'%model # /v2.2
+    base_write = '/ourdisk/hpc/ai2es/sedris/fd_analysis/data/%s'%model # /v2.2
 
     for m, variable in enumerate(variables[model]):
         # Collect all the .nc files to be examined

@@ -183,7 +183,7 @@ def calculate_fd_statistics(
     Calculate FD climatology statistics (frequency, severity, duration)
     
     Inputs:
-    :param args: Dictionary of command line arguments. Uses --data_path, --model, and --nprocesses
+    :param args: Dictionary of command line arguments. Uses --data_path, --model, --gldas_version and --nprocesses
     :param fn_base: Base filename of FD label data
     :param index_base: Base filename of FD index data
     :param ind_sname: Dictionary keys (of .nc files) for index data
@@ -201,25 +201,35 @@ def calculate_fd_statistics(
         :param severity: Array of time averaged severity of FD events (np.ndarray with shape lat x lon)
     '''
 
+    if args.gldas_version == 'v2.2':
+        model_path = 'gldas/v2.2' if args.model == 'gldas' else args.model
+    else:
+        model_path = args.model
+
     # Find all the files with the identified FD
-    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
+    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, model_path, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
     # print(fd_files)
 
     # Find all index files for severity calculations
-    index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
+    index_files = glob('%s/%s/%s*.nc'%(args.data_path, model_path, index_base), recursive = True)
     index_files = np.sort(index_files)
 
     # If ind_sname is None, then either FDII and/or root zone SM is being examined.
     # If RZSM is examined, collect all the layer 1 and 2 SM files for RZSM calculations
     if ind_sname is not None:
         if 'rz' in index_base:
-            sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
-            sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
-            index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
-            index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base2), recursive = True)
-            index_files_1 = np.sort(index_files_1)
-            index_files_2 = np.sort(index_files_2)
+            if args.gldas_version == 'v2.2':
+                sm_base = 'africa_volumetric_soil_water_root_zone_' if args.model == 'era5' else 'africa_gldas.soil_moisture_root_zone.daily_'
+                index_files = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, model_path, sm_base), recursive = True)
+                index_files = np.sort(index_files)
+            else:
+                sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
+                sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
+                index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, model_path, sm_base1), recursive = True)
+                index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, model_path, sm_base2), recursive = True)
+                index_files_1 = np.sort(index_files_1)
+                index_files_2 = np.sort(index_files_2)
 
     # Load an FD file to initialize the characteristics datasets
     with Dataset(fd_files[0], 'r') as nc:
@@ -252,14 +262,14 @@ def calculate_fd_statistics(
                 ind_sname = 'soilm'
                 
             # For RZSM, combine the two filenames and snames/dictionary keys for the RZSM calculations
-            if 'rz' in index_base:
+            if ('rz' in index_base) & np.invert(args.gldas_version == 'v2.2'):
                 index_files_combined = [index_files_1[t], index_files_2[t]]
                 ind_snames = ['swvl1', 'swvl2'] if args.model == 'era5' else ['soilm', 'soilm']
                 # Load RZSM for 1 year
                 index_data = load_index_one_year(index_files_combined, ind_snames, index_base, times = times, I = I, J = J)
             else:
                 # Load the FD index for 1 year
-                index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, I = I, J = J)
+                index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, version = args.gldas_version, I = I, J = J)
         else:
             # Placeholder so index_total can still be called when using FDII without 
             # significant code changes or further bloating the params argument
@@ -340,7 +350,7 @@ def calculate_fd_statistics_by_year(
     Calculate FD climatology statistics (frequency, severity, duration) for each year individually
     
     Inputs:
-    :param args: Dictionary of command line arguments. Uses --level, --data_path, --model, and --nprocesses
+    :param args: Dictionary of command line arguments. Uses --level, --data_path, --model, --gldas_version, and --nprocesses
     :param fn_base: Base filename of FD label data
     :param index_base: Base filename of FD index data
     :param ind_sname: Dictionary keys (of .nc files) for index data
@@ -356,31 +366,41 @@ def calculate_fd_statistics_by_year(
 
     # Determine if the calculations has already been done and saved
     # If they are done, load the data and return the values
+    if args.gldas_version == 'v2.2':
+        model_path = 'gldas/v2.2' if args.model == 'gldas' else args.model
+    else:
+        model_path = args.model
+
     level = 'rz' if args.level == 0 else str(args.level)
     filename = '%s_fd_characteristics_by_year_%s_level_%s.pkl'%(fd_type, times, level)
-    if os.path.exists('%s/%s/%s'%(args.data_path, args.model, filename)):
+    if os.path.exists('%s/%s/%s'%(args.data_path, model_path, filename)):
         frequency, duration, severity = load_pickle('%s/%s/%s'%(args.data_path, args.model, filename))
         return frequency, duration, severity
 
     # Find all the files for the identified FD
     # Note files are data for 1 year of data
-    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
+    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, model_path, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
     # print(fd_files)
 
     # Find all index files for severity
-    index_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, index_base), recursive = True)
+    index_files = glob('%s/%s/%s*.nc'%(args.data_path, model_path, index_base), recursive = True)
     index_files = np.sort(index_files)
 
 	# If ind_sname is None, then either FDII and/or root zone SM is being examined.
     # If RZSM is examined, collect all the layer 1 and 2 SM files for RZSM calculations
     if ('rz' in fn_base) & (index_base is not None):
-        sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
-        sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
-        index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base1), recursive = True)
-        index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, args.model, sm_base2), recursive = True)
-        index_files_1 = np.sort(index_files_1)
-        index_files_2 = np.sort(index_files_2)
+        if args.gldas_version == 'v2.2':
+            sm_base = 'africa_volumetric_soil_water_root_zone_' if args.model == 'era5' else 'africa_gldas.soil_moisture_root_zone.daily_'
+            index_files = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, model_path, sm_base), recursive = True)
+            index_files = np.sort(index_files)
+        else:
+            sm_base1 = 'africa_volumetric_soil_water_layer_1_' if args.model == 'era5' else 'africa_gldas.soil_moisture_0-10cm.daily_'
+            sm_base2 = 'africa_volumetric_soil_water_layer_2_' if args.model == 'era5' else 'africa_gldas.soil_moisture_10-40cm.daily_'
+            index_files_1 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, model_path, sm_base1), recursive = True)
+            index_files_2 = glob('%s/%s/liquid_vsm/%s*.nc'%(args.data_path, model_path, sm_base2), recursive = True)
+            index_files_1 = np.sort(index_files_1)
+            index_files_2 = np.sort(index_files_2)
 
     # Load an FD file to initialize the characteristic datasets
     with Dataset(fd_files[0], 'r') as nc:
@@ -388,7 +408,7 @@ def calculate_fd_statistics_by_year(
 
     # Load 40th percentile threshold (for severity calculations) if necessary
     if ind_sname is not None:
-        with Dataset('%s/%s/africa_%s_40_percent_thresh.nc'%(args.data_path, args.model, ind_sname), 'r') as nc:
+        with Dataset('%s/%s/africa_%s_40_percent_thresh.nc'%(args.data_path, model_path, ind_sname), 'r') as nc:
             thresholds = nc.variables['thresholds'][:]
 
     # Initialize FD frequency data (total FDs in dataset; starts count at 0)
@@ -413,14 +433,14 @@ def calculate_fd_statistics_by_year(
                 ind_sname = 'soilm'
                 
             # For RZSM, combine the two filenames and snames/dictionary keys for the RZSM calculations
-            if 'rz' in index_base:
+            if ('rz' in index_base) & np.invert(args.gldas_version == 'v2.2'):
                 index_files_combined = [index_files_1[t], index_files_2[t]]
                 ind_snames = ['swvl1', 'swvl2'] if args.model == 'era5' else ['soilm', 'soilm']
                 # Load RZSM for 1 year
                 index_data = load_index_one_year(index_files_combined, ind_snames, index_base, times = times, I = I, J = J)
             else:
                 # Load the FD index for 1 year
-                index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, I = I, J = J)
+                index_data = load_index_one_year(index_files[t], ind_sname, index_base, times = times, version = args.gldas_version, I = I, J = J)
         else:
             # Placeholder so index_total can still be called when using FDII without 
             # significant code changes or further bloating the params argument
@@ -466,7 +486,7 @@ def calculate_fd_statistics_by_year(
     severity[severity == 0] = np.nan
 
     # Save results to a pickle file so the calculations don't need to be repeated
-    save_pickle('%s/%s/%s'%(args.data_path, args.model, filename), [frequency, duration, severity], ['freq', 'dur', 'sev'])
+    save_pickle('%s/%s/%s'%(args.data_path, model_path, filename), [frequency, duration, severity], ['freq', 'dur', 'sev'])
         
     return frequency, duration, severity
 
@@ -482,7 +502,7 @@ def load_start_times(
     Determine the start dates of flash drought for a given method
     
     Inputs:
-    :param args: Dictionary of command line arguments. Uses --data_path, --model, and --nprocesses
+    :param args: Dictionary of command line arguments. Uses --data_path, --model, --gldas_version, and --nprocesses
     :param fn_base: Base filename of FD label data
     :param sname: The short name/dictionary key (of .nc files) of the FD data
     :param lat, lon: Latitude and longitudes of the dataset (for subsetting; np.ndarray with shape lat and lon respectively)
@@ -494,9 +514,13 @@ def load_start_times(
     :param fd_start_times_ind: Dictionary with keys corresponding to spatial indices where FD start times are; 
                                each item is a list of timeseries indices indicating when FD began in the grid's timeseries
     '''
+    if args.gldas_version == 'v2.2':
+        model_path = 'gldas/v2.2' if args.model == 'gldas' else args.model
+    else:
+        model_path = args.model
 
     # Find all the files for the identified FD
-    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, args.model, fn_base), recursive = True)
+    fd_files = glob('%s/%s/%s*.nc'%(args.data_path, model_path, fn_base), recursive = True)
     fd_files = np.sort(fd_files)
 
 	# Load FD data
@@ -737,6 +761,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_year', type = int, default = 1979, help = 'First year in FD dataset')
     parser.add_argument('--end_year', type = int, default = 2024, help = 'Last year in FD dataset')
     parser.add_argument('--nprocesses', type=int, default=1, help='Number of working threads for multiprocesses tasks')
+    parser.add_argument('--gldas_version', type = str, default = 'v2.1', help = 'GLDAS version to consider (v2.2 also uses 0 - 100 cm RZSM in ERA5 analysis)')
 
     # Parse the arguments
     args = parser.parse_args()
@@ -1128,9 +1153,11 @@ if __name__ == '__main__':
                     # Using GLDAS data past 2011 in the trend analysis produces 
                     # strange gridding artifacts that are not realistic; perform the trend only to 2011 for GLDAS
                     # and all for ERA5
-                    pass
-                    #ind = np.where(years <= 2011)[0]
+                    
+                    ind = np.where(years <= 2025)[0]
+                    # ind = np.where(years <= 2011)[0]
                 else:
+                    # ind = np.where(years <= 2011)[0]
                     ind = np.where(years <= 2025)[0]
 
                 T, I, J = frequency.shape
@@ -1194,6 +1221,7 @@ if __name__ == '__main__':
             tmp_freq = np.nanmean(frequency.reshape(T,I*J), axis = -1)
             tmp_dur = np.nanmean(duration.reshape(T,I*J), axis = -1)
             tmp_sev = np.nanmean(severity.reshape(T,I*J), axis = -1)
+            print(tmp_dur)
             # Trend analysis of the spatial means
             slope_freq, intercept_freq, pval_freq = trend_analysis(years.copy(), tmp_freq.copy())
             slope_dur, intercept_dur, pval_dur = trend_analysis(years.copy(), tmp_dur.copy())
@@ -1402,10 +1430,10 @@ if __name__ == '__main__':
         # Determine the variables to examine in the sensitivity analysis (used to be different depending on models)
         if args.model == 'era5':
             variable_snames = ['tair', 'd2m', 'e', 'pev', 'tp', 'vpd', 'swvlrz', 'enso', 'iod', 'mjo']
-            labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
+            labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'OLR']
         else:
             variable_snames = ['tair', 'd2m', 'e', 'pev', 'tp', 'vpd', 'swvlrz', 'enso', 'iod', 'mjo']
-            labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
+            labels = ['T', r'T$_d$', 'E', 'PE', 'Prec', 'VPD', 'RZSM', 'ENSO', 'IOD/\nDMI', 'OLR']
             # variable_snames = ['tair', 'sp', 'ws', 'e', 'pev', 'tp', 'swvlrz', 'enso', 'iod', 'mjo']
             # labels = ['T', 'Pres', 'WS', 'E', 'PE', 'Prec', 'RZSM', 'ENSO', 'IOD/\nDMI', 'MJO']
 
@@ -1453,7 +1481,7 @@ if __name__ == '__main__':
                 variables_15day = {}
                 for var_sname in variable_snames:
                     # Load the variable
-                    variable = load_raw_data(var_sname, args.model)
+                    variable = load_raw_data(var_sname, args.model, version = args.gldas_version)
 
 					# Subset the variable if needed
                     if np.invert(args.region == 'none'):
@@ -1608,17 +1636,17 @@ if __name__ == '__main__':
                 for var_sname in variable_snames:
                     print(var_sname)
                     # Load the variable data
-                    variable = load_raw_data(var_sname, args.model)
+                    variable = load_raw_data(var_sname, args.model, version = args.gldas_version)
 
                     # Subset if necessary
                     if np.invert(args.region == 'none'):
                         variable, _, _ = subset_data(variable, sub_lat, lon[0,:], subset = args.region)
 
-					# Convert so positive PET represents energy fluxed into the atmosphere
+		    # Convert so positive PET represents energy fluxed into the atmosphere
                     if (var_sname == 'pev') & (args.model == 'era5'):
                         variable = -1*variable 
 
-					# Climate indices are already monthly to 15 day, so the running mean is not applied to them
+		    # Climate indices are already monthly to 15 day, so the running mean is not applied to them
                     if var_sname not in climate_indices:
                         T = variable.shape[0]
                         # Apply a 5 day running mean to smooth out white noise and deliver pentad behavior
@@ -1632,6 +1660,7 @@ if __name__ == '__main__':
                         for i in range(I):
                             for j in range(J):
                                 variable[:,i,j] = np.convolve(variable[:,i,j], np.ones((runmean))/runmean)[start_ind:end_ind]
+                                
                     # Cut off ends to avoid biasing correlation results and match the shape of other datasets
                     variable = variable[2:,:,:]
                     variable = variable[:-2,:,:]
@@ -1641,42 +1670,44 @@ if __name__ == '__main__':
                     variable = variable.reshape(T, I*J).astype(np.float32)
 
                     # Perform the correlation
-                    if args.region == 'none':
-                        # Correlation analysis
-                        results = stats.pearsonr(fd, variable, method = test_method, axis = 0)
-                        stat = results.statistic.reshape(I, J)
-                        pval = results.pvalue.reshape(I, J)
+                    # if args.region == 'none':
+                    #     # Correlation analysis
+                    #     results = stats.pearsonr(fd, variable, axis = 0) # method = test_method, axis = 0)
+                    #     stat = results.statistic.reshape(I, J)
+                    #     # pval = results.pvalue.reshape(I, J)
+                    #     pval = monte_carlo_significance(fd, variable, results.statistic, N = 1000, statistic = 'correlation').reshape(I, J)
 
-                        # Fix longitude displacement
-                        if args.model == 'era5':
-                            tmp = stat[:,lon_ind]
-                            stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
-                            tmp = pval[:,lon_ind]
-                            pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
+                    #     # Fix longitude displacement
+                    #     if args.model == 'era5':
+                    #         tmp = stat[:,lon_ind]
+                    #         stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
+                    #         tmp = pval[:,lon_ind]
+                    #         pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
-                        # Obtain the correlation and significance
-                        r['%s_%s'%(fd_type, var_sname)] = stat
-                        sig['%s_%s'%(fd_type, var_sname)] = pval
+                    #     # Obtain the correlation and significance
+                    #     r['%s_%s'%(fd_type, var_sname)] = stat
+                    #     sig['%s_%s'%(fd_type, var_sname)] = pval
 
-                        print(r['%s_%s'%(fd_type, var_sname)].shape, sig['%s_%s'%(fd_type, var_sname)].shape)
+                    #     print(r['%s_%s'%(fd_type, var_sname)].shape, sig['%s_%s'%(fd_type, var_sname)].shape)
 
-                        # Repeat for the FD index
-                        results = stats.pearsonr(fd_index, variable, method = test_method, axis = 0)
+                    #     # Repeat for the FD index
+                    #     results = stats.pearsonr(fd_index, variable, axis = 0) # method = test_method, axis = 0)
 
-                        # Fix longitude displacement
-                        stat = results.statistic.reshape(I, J)
-                        pval = results.pvalue.reshape(I, J)
+                    #     # Fix longitude displacement
+                    #     stat = results.statistic.reshape(I, J)
+                    #     # pval = results.pvalue.reshape(I, J)
+                    #     pval = monte_carlo_significance(fd_index, variable, results.statistic, N = 1000, statistic = 'correlation').reshape(I, J)
 
-                        # Fix longitude displacement
-                        if args.model == 'era5':
-                            tmp = stat[:,lon_ind]
-                            stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
-                            tmp = pval[:,lon_ind]
-                            pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
+                    #     # Fix longitude displacement
+                    #     if args.model == 'era5':
+                    #         tmp = stat[:,lon_ind]
+                    #         stat = np.concatenate([tmp, stat[:,:lon_ind[0]]], axis = 1)
+                    #         tmp = pval[:,lon_ind]
+                    #         pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
-						# Obtain the correlation and significance
-                        r_index['%s_%s'%(fd_type, var_sname)] = stat
-                        sig_index['%s_%s'%(fd_type, var_sname)] = pval
+		    #     # Obtain the correlation and significance
+                    #     r_index['%s_%s'%(fd_type, var_sname)] = stat
+                    #     sig_index['%s_%s'%(fd_type, var_sname)] = pval
 
                     # Spatially average the variable for lag correlation
                     variable = np.nanmean(variable, axis = -1)
@@ -1691,25 +1722,31 @@ if __name__ == '__main__':
                         N = np.abs(n)
                         if n < 0:
                             # Correlation analysis for negative lagged response
-                            results = stats.pearsonr(fd_space[N:], variable[:-N], method = test_method)
-                            results_index = stats.pearsonr(fd_index_space[N:], variable[:-N], method = test_method)
+                            results = stats.pearsonr(fd_space[N:], variable[:-N], )# method = test_method)
+                            results_index = stats.pearsonr(fd_index_space[N:], variable[:-N], )# method = test_method)
                             var_print = variable[:-N]; ind_print = fd_index_space[N:]
+                            pval = monte_carlo_significance(fd_space[N:], variable[:-N], results.statistic, N = 1000, statistic = 'correlation')
+                            pval_index = monte_carlo_significance(fd_space[N:], variable[:-N], results_index.statistic, N = 1000, statistic = 'correlation')
 
                         elif n == 0:
                             # Correlation for no lag
-                            results = stats.pearsonr(fd_space, variable, method = test_method)
-                            results_index = stats.pearsonr(fd_index_space, variable, method = test_method)
+                            results = stats.pearsonr(fd_space, variable, )# method = test_method)
+                            results_index = stats.pearsonr(fd_index_space, variable, )# method = test_method)
                             var_print = variable; ind_print = fd_index_space
+                            pval = monte_carlo_significance(fd_space, variable, results.statistic, N = 1000, statistic = 'correlation')
+                            pval_index = monte_carlo_significance(fd_space, variable, results_index.statistic, N = 1000, statistic = 'correlation')
 
                         elif n > 0:
                             # Correlation for positive lagged response
-                            results = stats.pearsonr(fd_space[:-N], variable[N:], method = test_method)
-                            results_index = stats.pearsonr(fd_index_space[:-N], variable[N:], method = test_method)
+                            results = stats.pearsonr(fd_space[:-N], variable[N:], )# method = test_method)
+                            results_index = stats.pearsonr(fd_index_space[:-N], variable[N:], )# method = test_method)
                             var_print = variable[N:]; ind_print = fd_index_space[:-N]
+                            pval = monte_carlo_significance(fd_space[:-N], variable[N:], results.statistic, N = 1000, statistic = 'correlation')
+                            pval_index = monte_carlo_significance(fd_space[:-N], variable[N:], results_index.statistic, N = 1000, statistic = 'correlation')
                             
                         # Obtain the correlation and significance results
-                        lagged_corr = results.statistic; lagged_sig = results.pvalue
-                        lagged_index_corr = results_index.statistic; lagged_index_sig = results_index.pvalue
+                        lagged_corr = results.statistic; lagged_sig = pval# ; lagged_sig = results.pvalue
+                        lagged_index_corr = results_index.statistic; lagged_index_sig = pval_index# ; lagged_index_sig = results_index.pvalue
 
                         # Add the lagged correlations to their respective list
                         r_lag['%s_%s'%(fd_type, var_sname)].append(lagged_corr)
@@ -1775,7 +1812,7 @@ if __name__ == '__main__':
                     analysis_vars = ['tp', 'pev', 'e']
                     for var in analysis_vars:
                     	# Load the variable
-                        variable = load_raw_data(var, args.model)
+                        variable = load_raw_data(var, args.model, version = args.gldas_version)
                         
                         # Perform EOF analysis and plot results
                         eof_analysis(
@@ -1792,7 +1829,7 @@ if __name__ == '__main__':
 		# Outside of the fd_type loop, perform analysis for energy vs moisture drivers (done with all FD types together)
         if args.skip_energy_moisture_drivers:
             # Load precipitation
-            precip = load_raw_data('tp', args.model)
+            precip = load_raw_data('tp', args.model, version = args.gldas_version)
 
             # Subset if necessary
             if np.invert(args.region == 'none'):
@@ -1808,7 +1845,7 @@ if __name__ == '__main__':
             spi = calculate_spi(precip, dates_all)
 
             # Load the PET
-            pet = load_raw_data('pev', args.model)
+            pet = load_raw_data('pev', args.model, version = args.gldas_version)
 
             # Subset if necessary
             if np.invert(args.region == 'none'):
@@ -1920,40 +1957,40 @@ if __name__ == '__main__':
             
         # At the end of the loop, organize the correlation data to make the maps and lag plots
         if args.skip_correlation_plots:
-            if args.region == 'none':
-                for n, var_sname in enumerate(variable_snames):
-                    map_data = [r['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
-                    sig_data = [sig['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+            # if args.region == 'none':
+            #     for n, var_sname in enumerate(variable_snames):
+            #         map_data = [r['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+            #         sig_data = [sig['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                     
-                    # Make the correlation maps (for FD labels)
-                    savename = '%s_fd_%s_correlation_map.png'%(var_sname, level)
-                    make_correlation_maps(
-                        map_data, 
-                        sig_data, 
-                        lat, 
-                        lon, 
-                        fd_types, 
-                        labels[n], 
-                        path = '%s/%s/'%(args.figure_path, args.model), 
-                        savename = savename,
-                    )
+            #         # Make the correlation maps (for FD labels)
+            #         savename = '%s_fd_%s_correlation_map.png'%(var_sname, level)
+            #         make_correlation_maps(
+            #             map_data, 
+            #             sig_data, 
+            #             lat, 
+            #             lon, 
+            #             fd_types, 
+            #             labels[n], 
+            #             path = '%s/%s/'%(args.figure_path, args.model), 
+            #             savename = savename,
+            #         )
 
-                    map_data = [r_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
-                    sig_data = [sig_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+            #         map_data = [r_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
+            #         sig_data = [sig_index['%s_%s'%(fd_type, var_sname)] for fd_type in fd_types]
                     
-                    # Make the correlation maps (for FD indices)
-                    savename = '%s_fd_index_%s_correlation_map.png'%(var_sname, level)
-                    make_correlation_maps(
-                        map_data, 
-                        sig_data, 
-                        lat, 
-                        lon, 
-                        fd_types, 
-                        labels[n], 
-                        index_corr = True, 
-                        path = '%s/%s/'%(args.figure_path, args.model), 
-                        savename = savename,
-                    )
+            #         # Make the correlation maps (for FD indices)
+            #         savename = '%s_fd_index_%s_correlation_map.png'%(var_sname, level)
+            #         make_correlation_maps(
+            #             map_data, 
+            #             sig_data, 
+            #             lat, 
+            #             lon, 
+            #             fd_types, 
+            #             labels[n], 
+            #             index_corr = True, 
+            #             path = '%s/%s/'%(args.figure_path, args.model), 
+            #             savename = savename,
+            #         )
 
             # Make the lag correlation plots (FD labels)
             savename = 'lagged_correlation_fd_%s%s.png'%(level, region)
@@ -2123,17 +2160,20 @@ if __name__ == '__main__':
                 alt_ind = 0
 
             # Perform correlation
-            results = stats.pearsonr(frequency[i], frequency[alt_ind], method = test_method)
+            results = stats.pearsonr(frequency[i], frequency[alt_ind], )# method = test_method)
             correlations[i,0] = results.statistic
-            pvals[i,0] = results.pvalue
+            pvals[i,0] = monte_carlo_significance(frequency[i], frequency[alt_ind], correlations[i,0], N = 1000, statistic = 'correlation')
+            # pvals[i,0] = results.pvalue
 
-            results = stats.pearsonr(frequency_sum[i], frequency_sum[alt_ind], method = test_method)
+            results = stats.pearsonr(frequency_sum[i], frequency_sum[alt_ind], )# method = test_method)
             correlations[i,1] = results.statistic
-            pvals[i,1] = results.pvalue
+            pvals[i,1] = monte_carlo_significance(frequency_sum[i], frequency_sum[alt_ind], correlations[i,1], N = 1000, statistic = 'correlation')
+            # pvals[i,1] = results.pvalue
 
-            results = stats.pearsonr(frequency_win[i], frequency_win[alt_ind], method = test_method)
+            results = stats.pearsonr(frequency_win[i], frequency_win[alt_ind], )# method = test_method)
             correlations[i,2] = results.statistic
-            pvals[i,2] = results.pvalue
+            pvals[i,2] = monte_carlo_significance(frequency_win[i], frequency_win[alt_ind], correlations[i,2], N = 1000, statistic = 'correlation')
+            # pvals[i,2] = results.pvalue
 
             # Determine regression values
             slopes[i,0], intercepts[i,0], _ = least_squares(frequency[i], frequency[alt_ind])

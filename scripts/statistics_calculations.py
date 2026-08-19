@@ -153,7 +153,7 @@ def monte_carlo_significance(
             mc[:,n], _, _ = least_squares(x, y[i,:]) if len(y.shape) > 1 else least_squares(x, y[i])
         elif statistic == 'correlation':
             # N samples of correlation calculations (note this process is very time consuming)
-            mc[:,n], _ = stats.pearsonr(x, y[i,:], axis = 0) if len(y.shape) > 1 else stats.pearsonr(x, y[i]) 
+            mc[:,n] = stats.pearsonr(x, y[i,:], axis = 0).statistic if len(y.shape) > 1 else stats.pearsonr(x, y[i]).statistic
             # correlate(x, y[i,:]) if len(y.shape) > 1 else correlate(x, y[i])
     
     # Determine the p-value(s) based on where the original statistic is in the distribution of random samples

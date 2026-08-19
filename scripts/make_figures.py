@@ -341,8 +341,9 @@ def make_trend_maps(
             # Plot the data
             if significance_plots:
                 # Determine areas of statistical significance
-                significance_data = np.where(((sig[i][j] > (1-alpha/2)) | (sig[i][j] < (alpha/2))) & (data[i][j] > 0), 1, 0)
-                significance_data = np.where(((sig[i][j] < (1-alpha/2)) & (sig[i][j] > (alpha/2))) & (data[i][j] < 0), 2, significance_data)
+                significance_data = np.where(((sig[i][j] > (1-alpha/2)) | (sig[i][j] < (alpha/2))) & (data[i][j] > 0), 1, np.nan)
+                # significance_data = np.where(((sig[i][j] > (1-alpha/2)) | (sig[i][j] < (alpha/2))) & (data[i][j] > 0), 1, 0)
+                # significance_data = np.where(((sig[i][j] < (1-alpha/2)) & (sig[i][j] > (alpha/2))) & (data[i][j] < 0), 2, significance_data)
                 significance_data = np.where(((sig[i][j] > (1-alpha/2)) | (sig[i][j] < (alpha/2))) & (data[i][j] < 0), 3, significance_data)
                 # Plot the statistical significance
                 cs = axes[i,j].pcolormesh(lon, lat, significance_data, vmin = 0, vmax = 3,
@@ -426,13 +427,14 @@ def make_trend_maps(
     # Statistical significance uses a set of boxes in a legend to indicate statistical significance with increasing/decreasing trends
     else:
         # Custom patches/boxes for the legend
-        not_sig_pos = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.0), edgecolor = 'k', label = 'Not Significant Increasing')
+        # not_sig_pos = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.0), edgecolor = 'k', label = 'Not Significant Increasing')
         sig_pos = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.25), edgecolor = 'k', label = 'Significant Increasing')
-        not_sig_neg = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.50), edgecolor = 'k', label = 'Not Significant Decreasing')
+        # not_sig_neg = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.50), edgecolor = 'k', label = 'Not Significant Decreasing')
         sig_neg = mpatches.Rectangle((0,0), 2, 1, facecolor = cmap(0.75), edgecolor = 'k', label = 'Significant Decreasing')
         
-        # Add boxes indicating significance colors
-        fig.legend(handles = [not_sig_pos, sig_pos, not_sig_neg, sig_neg], bbox_to_anchor = (0.75, 0.1), frameon = False, ncols = len([not_sig_pos, sig_pos]), fontsize = 22) # loc = 'lower center',
+        # Add boxes indicating significance colors; 
+        # Older boxes and anchor: [not_sig_pos, sig_pos, not_sig_neg, sig_neg]; (0.75, 0.1)
+        fig.legend(handles = [sig_pos,  sig_neg], bbox_to_anchor = (0.705, 0.1), frameon = False, ncols = len([sig_neg, sig_pos]), fontsize = 22) # loc = 'lower center',
             
     # Save the figure
     plt.savefig('%s/%s'%(path, savename), bbox_inches = 'tight')
@@ -632,7 +634,7 @@ def make_lagged_correlation_plot(
         # Make the regression line for each variable
         for m, sname in enumerate(snames):
             # Determine lag times with statistical significance
-            significance_data = [(pval > (1-alpha/2)) | (pval < (alpha/2)) for pval in pvals['%s_%s'%(fd_types[n], sname)]]
+            significance_data = np.concatenate([(pval > (1-alpha/2)) | (pval < (alpha/2)) for pval in pvals['%s_%s'%(fd_types[n], sname)]])
             #np.where((pvals['%s_%s'%(fd_types[n], sname)] > (1-alpha/2)) | (pvals[['%s_%s'%(fd_types[n], sname)] < (alpha/2)), 1, 0)
 
             # Plot the time series 
@@ -974,6 +976,7 @@ def timeseries_plot(
     '''
 
 	# Initialize some variables for each line
+    alpha = 0.05
     ncols = 3
     colors = ['k', 'r', 'b']
     units = {'frequency': 'Events / Grid Point', 
@@ -997,15 +1000,16 @@ def timeseries_plot(
                 yhat, 
                 color = colors[m], 
                 linestyle = '--', 
-                marker = symbols[m], 
-                label = r'%s: $\hat{y}$ = %6.4ft+%5.2f, p-value = %4.3f'%(fd_types[m].upper(), slopes[m][n], intercepts[m][n], p_values[m][n]),
+                marker = symbols[m] if (p_values[m][n] <= alpha/2) | (p_values[m][n] >= (1-alpha/2)) else None, 
+                label = r'%s slope: %5.4f'%(fd_types[m].upper(), slopes[m][n])
+                # label = r'%s: $\hat{y}$ = %6.4ft+%5.2f, p-value = %4.3f'%(fd_types[m].upper(), slopes[m][n], intercepts[m][n], p_values[m][n]),
             )
 
         # Set the plot title
         axes[n].set_title(times[n], fontsize = 22)
 
         # Add the legend
-        axes[n].legend(fontsize = 16)
+        axes[n].legend(fontsize = 22)
 
         # Set the label
         axes[n].set_xlabel('Time', fontsize = 22)

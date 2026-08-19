@@ -42,7 +42,7 @@ raw_data_base_names = {
         'vpd': ['africa_2m_temperature_', 'africa_2m_dewpoint_'], 
         'swvl1': 'africa_volumetric_soil_water_layer_1_', 
         'swvl2': 'africa_volumetric_soil_water_layer_2_', 
-        'swvlrz': ['africa_volumetric_soil_water_layer_1_', 'africa_volumetric_soil_water_layer_2_']
+        'swvlrz': ['africa_volumetric_soil_water_layer_1_', 'africa_volumetric_soil_water_layer_2_', 'africa_volumetric_soil_water_root_zone_']
     },
     'gldas': {
         'tair': 'africa_gldas.temperature.daily_',
@@ -55,7 +55,7 @@ raw_data_base_names = {
         'vpd': ['africa_gldas.temperature.daily_', 'africa_gldas.specific_humidity.daily_'], 
         'swvl1': 'africa_gldas.soil_moisture_0-10cm.daily_', 
         'swvl2': 'africa_gldas.soil_moisture_10-40cm.daily_', 
-        'swvlrz': ['africa_gldas.soil_moisture_0-10cm.daily_', 'africa_gldas.soil_moisture_10-40cm.daily_']
+        'swvlrz': ['africa_gldas.soil_moisture_0-10cm.daily_', 'africa_gldas.soil_moisture_10-40cm.daily_', 'africa_gldas.soil_moisture_root_zone.daily_']
     },
     'enso': 'enso.timeseries',
     'iod': 'dmi.had.long',
@@ -128,6 +128,7 @@ def load_index_one_year(
         sname, 
         index_base, 
         times: str = 'all',
+        version = 'v2.1',
         I: int = 180,
         J: int = 360,
         ) -> np.ndarray:
@@ -139,6 +140,7 @@ def load_index_one_year(
     :param sname: Dictionary key of the data to load; if None no data is loaded
     :param index_base: Base filename of the index data
     :param times: String indicating whether to return full year of index data, or only for summer/winter months
+    :param version: String indicating GLDAS version being loaded (for ERA5, v2.2 also denotes to load 0 - 100 cm SM data)
     :param I, J: Spatial dimensions used to make placeholder data if sname == None
 
     Outputs:
@@ -147,7 +149,7 @@ def load_index_one_year(
     # Load the index data
     if sname is not None:
         # For root zone, two soil layers need to be loaded to calculate RZSM
-        if 'rz' in index_base:
+        if ('rz' in index_base) & np.invert(version == 'v2.2'):
         	# Load the top layer of SM data
             with Dataset(file[0], 'r') as nc:
                 index_data_1 = nc.variables[sname[0]][:]
@@ -195,13 +197,14 @@ def load_index_one_year(
 
     return index_data
 
-def load_raw_data(sname, model) -> np.ndarray:
+def load_raw_data(sname, model, version = 'v2.1') -> np.ndarray:
     '''
     Load a set of raw data for a given variable
     
     Inputs:
     :param sname: Dictionary key of the data to load
     :param model: Reanalysis model the dataset comes from ("era5" or "gldas")
+    :param version: GLDAS version to reference (and whether to reference root_zone layer in ERA5 soil moisture)
     
     Outputs:
     :param data: Raw data loaded for all years available (np.ndarray with shape time x lat x lon)
@@ -226,7 +229,7 @@ def load_raw_data(sname, model) -> np.ndarray:
         path = path%model
 
     # Collect the base names of the variable
-    base_fn = raw_data_base_names[model][sname]
+    base_fn = raw_data_base_names[model][sname] if np.invert(version == 'v2.2') else raw_data_base_names[model][sname][-1]
 
 	# GLDAS has different keys from what will be given; collect the correct one
     if model == 'gldas':
@@ -294,15 +297,21 @@ def load_raw_data(sname, model) -> np.ndarray:
             vpd = vapor_pressure_deficit(tair, tdew)
             data.append(vpd)
         elif sname == 'swvlrz':
-            # Load soil moisture for the two root zone layers
-            with Dataset(file, 'r') as nc:
-                sm1 = nc.variables['swvl1'][:] if model == 'era5' else nc.variables['soilm'][:]
-            
-            with Dataset(files_2[n], 'r') as nc:
-                sm2 = nc.variables['swvl2'][:] if model == 'era5' else nc.variables['soilm'][:]
+            # Version 2.2 of GLDAS has RZSM already calculated (one of only three SM options)
+            if version == 'v2.2':
+                with Dataset(file, 'r') as nc:
+                    rzsm = nc.variables['swvlrz'][:] if model == 'era5' else nc.variables['soilm'][:]
+            else:
+                # Load soil moisture for the two root zone layers
+                with Dataset(file, 'r') as nc:
+                    sm1 = nc.variables['swvl1'][:] if model == 'era5' else nc.variables['soilm'][:]
+                
+                with Dataset(files_2[n], 'r') as nc:
+                    sm2 = nc.variables['swvl2'][:] if model == 'era5' else nc.variables['soilm'][:]
 
-            # Calculate RZSM
-            rzsm = (7/28) * sm1 + (21/28) * sm2 if model == 'era5' else (10/40) * sm1 + (30/40) * sm2
+                # Calculate RZSM
+                rzsm = (7/28) * sm1 + (21/28) * sm2 if model == 'era5' else (10/40) * sm1 + (30/40) * sm2
+
             data.append(rzsm)
         elif (sname == 'q') & (model == 'gldas'):
             # Load q
