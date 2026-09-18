@@ -216,20 +216,24 @@ def load_raw_data(sname, model, version = 'v2.1') -> np.ndarray:
         data = load_climate_index(sname, model)
         return data
 
+    model_path = model + '/' + 'v2.2' if (model == 'gldas') & (version == 'v2.2') else model
+
     # Collect the path to the variable
     path = raw_data_paths[sname]
     # Note some variables require multiple paths because they are calculated from multiple variables
-    if isinstance(path, list) & (sname != 'vpd') & (sname != 'ws'):
-        path = [p%model for p in path]
+    if (version == 'v2.2') & (sname == 'swvlrz'):
+        path = path[-1]%model_path
+    elif isinstance(path, list) & (sname != 'vpd') & (sname != 'ws'):
+        path = [p%model_path for p in path]
     elif ((sname == 'ws') & (model == 'era5')) | (sname == 'vpd'):
-        path = [p%model for p in path]
+        path = [p%model_path for p in path]
     elif (model == 'gldas') & (sname == 'ws'):
-        path = path[0]%model
+        path = path[0]%model_path
     else:
-        path = path%model
+        path = path%model_path
 
     # Collect the base names of the variable
-    base_fn = raw_data_base_names[model][sname] if np.invert(version == 'v2.2') else raw_data_base_names[model][sname][-1]
+    base_fn = raw_data_base_names[model][sname][-1] if (version == 'v2.2') & (sname == 'swvlrz') else raw_data_base_names[model][sname]
 
 	# GLDAS has different keys from what will be given; collect the correct one
     if model == 'gldas':

@@ -1642,11 +1642,11 @@ if __name__ == '__main__':
                     if np.invert(args.region == 'none'):
                         variable, _, _ = subset_data(variable, sub_lat, lon[0,:], subset = args.region)
 
-		    # Convert so positive PET represents energy fluxed into the atmosphere
+		            # Convert so positive PET represents energy fluxed into the atmosphere
                     if (var_sname == 'pev') & (args.model == 'era5'):
                         variable = -1*variable 
 
-		    # Climate indices are already monthly to 15 day, so the running mean is not applied to them
+		            # Climate indices are already monthly to 15 day, so the running mean is not applied to them
                     if var_sname not in climate_indices:
                         T = variable.shape[0]
                         # Apply a 5 day running mean to smooth out white noise and deliver pentad behavior
@@ -1669,7 +1669,7 @@ if __name__ == '__main__':
                     T, I, J = variable.shape
                     variable = variable.reshape(T, I*J).astype(np.float32)
 
-                    # Perform the correlation
+                    # # Perform the correlation
                     # if args.region == 'none':
                     #     # Correlation analysis
                     #     results = stats.pearsonr(fd, variable, axis = 0) # method = test_method, axis = 0)
@@ -1705,7 +1705,7 @@ if __name__ == '__main__':
                     #         tmp = pval[:,lon_ind]
                     #         pval = np.concatenate([tmp, pval[:,:lon_ind[0]]], axis = 1)
 
-		    #     # Obtain the correlation and significance
+		            #     # Obtain the correlation and significance
                     #     r_index['%s_%s'%(fd_type, var_sname)] = stat
                     #     sig_index['%s_%s'%(fd_type, var_sname)] = pval
 

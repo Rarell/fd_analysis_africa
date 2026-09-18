@@ -141,13 +141,11 @@ def monte_carlo_significance(
 
     # Intialize the random samples of the statistic
     ind = np.random.randint(0, T, (N, T))
-    # print(ind.shape)
-
     mc = np.ones((IJ, N)) * np.nan
-    # print(mc.shape)
 
     # Make N random samples of the statistic with suffled values (based on ind)
     for n, i in tqdm(enumerate(ind)):
+
         if statistic == 'regression':
             # N samples of regression calculations
             mc[:,n], _, _ = least_squares(x, y[i,:]) if len(y.shape) > 1 else least_squares(x, y[i])
@@ -155,6 +153,67 @@ def monte_carlo_significance(
             # N samples of correlation calculations (note this process is very time consuming)
             mc[:,n] = stats.pearsonr(x, y[i,:], axis = 0).statistic if len(y.shape) > 1 else stats.pearsonr(x, y[i]).statistic
             # correlate(x, y[i,:]) if len(y.shape) > 1 else correlate(x, y[i])
+
+    # More efficient method for Monte-Carlo for correlation, according to Claude
+    # Consumes too much memory
+    # if statistic == 'correlation':
+    #     from joblib import Parallel, delayed
+    #     spatial_chunk = 500
+
+    #     if len(y.shape) > 1:
+    #         def process_chunk(start, end):
+    #             x_chunk = x[:, start:end]
+    #             y_chunk = y[:, start:end]
+    #             # stat_chunk = original_statistic[start:end]
+
+    #             x_prime = x_chunk - np.nanmean(x_chunk, axis=0, keepdims=True)
+    #             x_sigma = np.nansum(xprime**2, axis=0)
+
+    #             chunk_width = end - start
+    #             mc_chunk = np.empty((chunk_width, N), dtype=np.float32)
+    #             for n in range(N):
+    #                 y_n = y_chunk[ind[n]]                     # (T, chunk_width) -- small, bounded
+    #                 y_n_prime = y_n - np.nanmean(y_n, axis=0, keepdims=True)
+    #                 numerator = np.nansum(x_prime * y_n_prime, axis=0)
+    #                 y_n_sigma = np.nansum(y_n_prime**2, axis=0)
+    #                 mc_chunk[start:end, n] = numerator / (np.sqrt(x_sigma * y_sigma) + 1e-12)
+
+    #             return start, mc_chunk
+
+    #         chunk_bounds = [(s, min(s + spatial_chunk, IJ)) for s in range(0, IJ, spatial_chunk)]
+
+    #         # if n_jobs == 1:
+    #         #     for start, end in chunk_bounds:
+    #         #         s, chunk_pval = process_chunk(start, end)
+    #         #         pval[s:s + len(chunk_pval)] = chunk_pval
+    #         # else:
+    #         # threading backend: no process spawn, no array copies -- numpy releases
+    #         # the GIL during the array ops above, so this still parallelizes real work
+    #         results = Parallel(n_jobs=5, backend="threading", verbose = 51)(
+    #             delayed(process_chunk)(start, end) for start, end in chunk_bounds
+    #         )
+    #         for start, chunk_mc in results:
+    #             mc[start:start + len(chunk_pval)] = chunk_mc
+
+    #     else:
+    #         # Calculate x statistics once
+    #         x_prime = (x - np.nanmean(x, axis = 0, keepdims = True)).astype(np.float32)
+    #         x_sigma = np.nansum(x_prime**2, axis = 0).astype(np.float32)
+    #         print('x statistics made')
+
+    #         def one_sample(i_row):
+    #             # y_n = y[i_row]
+    #             y_n_prime = y[i_row] - np.nanmean(y[i_row], axis = 0, keepdims = True, dtype = np.float32)
+    #             y_n_sigma = np.nansum(y_prime**2, axis = 0, dtype = np.float32)
+    #             numerator = np.nansum(x_prime * y_n_prime, axis = 0)
+    #             return numerator / (np.sqrt(y_n_sigma * x_sigma) + 1e-12)
+
+    #         results = Parallel(n_jobs = 1, verbose = 51, backend = 'loky')(
+    #             delayed(one_sample)(ind[n] for n in range(N))
+    #         )
+
+    #         mc = np.stack(results, axis = 1)
+    #         print(mc.size)
     
     # Determine the p-value(s) based on where the original statistic is in the distribution of random samples
     if len(y.shape) > 1:
